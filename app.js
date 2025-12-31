@@ -462,6 +462,67 @@ function renderFixed(){
   `;
 }
 
+function renderFamily(){
+  const list = (state.family || []);
+  const showInactive = !!state._showInactiveFamily;
+  const visible = showInactive ? list : list.filter(f => f.active !== false);
+
+  return `
+    <div class="card">
+      <div class="row gap12">
+        <h2 class="h1">家族</h2>
+        <div class="spacer"></div>
+        <label class="row gap8 small">
+          <input type="checkbox" id="toggleFamilyInactive" ${showInactive ? "checked" : ""}/>
+          無効も表示
+        </label>
+        <button class="btn" id="btnAddFamily">＋追加</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="tableWrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>続柄</th>
+              <th>生年月日</th>
+              <th>年齢</th>
+              <th>状態</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${visible.length===0 ? `
+              <tr><td colspan="6" class="small muted">まだ登録されていません。</td></tr>
+            ` : visible.map(f=>`
+              <tr>
+                <td>${escapeHtml(f.name||"")}</td>
+                <td>${escapeHtml(f.relation||"")}</td>
+                <td>${f.birthDate ? escapeHtml(f.birthDate) : "-"}</td>
+                <td>${(f.age!=null && f.age!=="") ? escapeHtml(String(f.age)) : "-"}</td>
+                <td>${f.active===false ? `<span class="badge">無効</span>` : `有効`}</td>
+                <td class="right nowrap">
+                  <button class="btn sm secondary" data-edit-family="${escapeHtml(f.id||"")}">編集</button>
+                  <button class="btn sm danger" data-del-family="${escapeHtml(f.id||"")}">削除</button>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sep"></div>
+      <div class="small muted">
+        ※誕生日などの期限は「定期イベント」画面で90日以内候補として表示されます。
+      </div>
+    </div>
+  `;
+}
+
+
+
 
 function renderEvents(){
   const list = (state.events||[]).filter(e=>e.active!==false);
@@ -1174,7 +1235,7 @@ function openFamilyModal(mode, item=null){
     }else{
       await updateDoc(doc(db, "family", v.id), payload);
     }
-    closeModal();
+    hideModal();
     await reloadAll();
   });
 
@@ -1183,7 +1244,7 @@ function openFamilyModal(mode, item=null){
     delBtn.addEventListener("click", async ()=>{
       if(!confirm("削除しますか？")) return;
       await deleteDoc(doc(db, "family", v.id));
-      closeModal();
+      hideModal();
       await reloadAll();
     });
   }
