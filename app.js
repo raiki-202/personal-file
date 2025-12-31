@@ -36,6 +36,10 @@ const state = {
   balances: [],
   fixedCosts: [],
   events: [],
+  family: [],
+  creditCards: [],
+  cars: [],
+  homes: [],
   route: "home"
 };
 
@@ -111,6 +115,19 @@ async function loadMonthData(month){
 
   const s4 = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
   state.events = s4.docs.map(d=>({id:d.id, ...d.data()}));
+  // family / others (for event suggestions)
+  const s5 = await getDocs(query(collection(db, "family"), orderBy("name","asc")));
+  state.family = s5.docs.map(d=>({id:d.id, ...d.data()}));
+
+  const s6 = await getDocs(query(collection(db, "creditCards"), orderBy("cardName","asc")));
+  state.creditCards = s6.docs.map(d=>({id:d.id, ...d.data()}));
+
+  const s7 = await getDocs(query(collection(db, "cars"), orderBy("carName","asc")));
+  state.cars = s7.docs.map(d=>({id:d.id, ...d.data()}));
+
+  const s8 = await getDocs(query(collection(db, "homes"), orderBy("name","asc")));
+  state.homes = s8.docs.map(d=>({id:d.id, ...d.data()}));
+
 }
 
 /** =========================
@@ -179,6 +196,7 @@ function mount(){
   else if(state.route==="money") view.innerHTML = renderMoney();
   else if(state.route==="accounts") view.innerHTML = renderAccounts();
   else if(state.route==="fixed") view.innerHTML = renderFixed();
+  else if(state.route==="family") view.innerHTML = renderFamily();
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
   wireViewEvents();
@@ -444,30 +462,169 @@ function renderFixed(){
   `;
 }
 
+
 function renderEvents(){
-  const list = state.events.filter(e=>e.active!==false);
+  const list = (state.events||[]).filter(e=>e.active!==false);
   const soon = list.filter(e=>withinDays(Number(e.date||0), 90));
+
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const exists = new Set(list.map(e=>`${e.sourceType||""}:${e.sourceId||""}:${e.type||""}:${Number(e.date||0)}`));
+
+  function parseYmd(s){
+    if(!s) return null;
+    // YYYY-MM-DD
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if(m) return {y:+m[1], mo:+m[2], d:+m[3]};
+    // YYYY-MM
+    const m2 = /^(\d{4})-(\d{2})$/.exec(s);
+    if(m2) return {y:+m2[1], mo:+m2[2], d:1};
+    return null;
+  }
+
+  function nextBirthdayMs(birthDate){
+    const p = parseYmd(birthDate);
+    if(!p) return null;
+    const now = new Date();
+    let y = now.getFullYear();
+    let dt = new Date(y, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    if(dt < today0.getTime()) dt = new Date(y+1, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    return dt;
+  }
+
+  function lastDayOfMonth(y, mo){
+    return new Date(y, mo, 0).getDate();
+  }
+
+  function expiryMs(exp){
+    const p = parseYmd(exp);
+    if(!p) return null;
+    // if only YYYY-MM, p.d=1 but we treat as end of month
+    const d = (exp.length===7) ? lastDayOfMonth(p.y, p.mo) : p.d;
+    const dt = new Date(p.y, p.mo-1, d, 12, 0, 0, 0).getTime();
+    return dt;
+  }
+
+  const suggested = [];
+
+  // family birthdays
+  (state.family||[]).filter(f=>f.active!==false).forEach(f=>{
+    const ms = nextBirthdayMs(f.birthDate);
+    if(ms && withinDays(ms, 90)){
+      const key = `family:${f.id}:birthday:${ms}`;
+      if(!exists.has(key)){
+        suggested.push({
+          title: `${f.name||"家族"} 誕生日`,
+          type: "birthday",
+          date: ms,
+          sourceType: "family",
+          sourceId: f.id
+        });
+      }
+    }
+  });
+
+  // credit card expiry
+  (state.creditCards||[]).filter(c=>c.active!==false && (c.status!=="stopped")).forEach(c=>{
+    const exp = c.expiryDate || c.expireDate || c.expiry || c.expiration || "";
+    const ms = expiryMs(exp);
+    if(ms && withinDays(ms, 90)){
+      const key = `creditCards:${c.id}:card_expiry:${ms}`;
+      if(!exists.has(key)){
+        suggested.push({
+          title: `${c.cardName||"カード"} 有効期限`,
+          type: "card_expiry",
+          date: ms,
+          sourceType: "creditCards",
+          sourceId: c.id
+        });
+      }
+    }
+  });
+
+  // car inspection / insurance (if data exists)
+  (state.cars||[]).filter(x=>x.active!==false).forEach(c=>{
+    const fields = [
+      {k:"inspectionDueDate", label:"点検期限", type:"car_check"},
+      {k:"insuranceDueDate", label:"任意保険", type:"car_insurance"},
+      {k:"shakenDueDate", label:"車検", type:"car_shaken"},
+    ];
+    fields.forEach(fld=>{
+      const v = c[fld.k] || "";
+      const ms = expiryMs(v) || (typeof v==="number"?v:null);
+      if(ms && withinDays(ms, 90)){
+        const key = `cars:${c.id}:${fld.type}:${ms}`;
+        if(!exists.has(key)){
+          suggested.push({
+            title: `${c.carName||"車"} ${fld.label}`,
+            type: fld.type,
+            date: ms,
+            sourceType: "cars",
+            sourceId: c.id
+          });
+        }
+      }
+    });
+  });
+
+  suggested.sort((a,b)=>a.date-b.date);
+
+  const suggestHtml = suggested.length===0 ? `
+    <div class="small muted">候補なし（家族の生年月日やカード有効期限などを登録するとここに出ます）</div>
+  ` : `
+    <table class="table" style="margin-top:8px;">
+      <thead><tr><th>日付</th><th>タイトル</th><th></th></tr></thead>
+      <tbody>
+        ${suggested.map(s=>`
+          <tr>
+            <td style="white-space:nowrap;">${new Date(Number(s.date)).toLocaleDateString("ja-JP")}</td>
+            <td>${escapeHtml(s.title)}</td>
+            <td style="white-space:nowrap; text-align:right;">
+              <button class="btn sm" 
+                data-add-suggest="1"
+                data-s-title="${escapeHtml(s.title)}"
+                data-s-type="${escapeHtml(s.type)}"
+                data-s-date="${String(s.date)}"
+                data-s-source-type="${escapeHtml(s.sourceType)}"
+                data-s-source-id="${escapeHtml(s.sourceId)}"
+              >イベントに追加</button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
   return `
     <div class="grid cols2">
       <div class="card">
         <div class="row">
-          <h2 class="h1">90日以内</h2>
+          <h2 class="h1">定期イベント</h2>
           <div class="spacer"></div>
-          <span class="badge">${soon.length}件</span>
           <button class="btn" id="btnAddEvent">＋追加</button>
         </div>
+
         <div class="sep"></div>
+
+        <div class="h2" style="margin-top:8px;">候補（90日以内）</div>
+        ${suggestHtml}
+
+        <div class="sep" style="margin-top:12px;"></div>
+
+        <div class="row">
+          <h2 class="h2">90日以内</h2>
+          <div class="spacer"></div>
+          <span class="badge">${soon.length}件</span>
+        </div>
         <table class="table">
           <thead><tr><th>日付</th><th>タイトル</th><th>種別</th><th></th></tr></thead>
           <tbody>
             ${soon.length===0 ? `<tr><td colspan="4" class="small">なし</td></tr>` : soon.map(e=>`
               <tr>
-                <td>${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
+                <td style="white-space:nowrap;">${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
                 <td>${escapeHtml(e.title||"")}</td>
-                <td>${escapeHtml(e.kind||"")}</td>
-                <td class="right">
-                  <button class="btn secondary" data-edit-event="${e.id}">編集</button>
-                  <button class="btn danger" data-del-event="${e.id}">削除</button>
+                <td class="muted">${escapeHtml(e.type||"-")}</td>
+                <td style="white-space:nowrap; text-align:right;">
+                  <button class="btn sm" data-edit-event="${e.id}">編集</button>
                 </td>
               </tr>
             `).join("")}
@@ -477,24 +634,33 @@ function renderEvents(){
 
       <div class="card">
         <div class="row">
-          <h2 class="h1">すべてのイベント</h2>
+          <h2 class="h1">全イベント</h2>
           <div class="spacer"></div>
           <span class="badge">${list.length}件</span>
         </div>
         <div class="sep"></div>
         <table class="table">
-          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
+          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th><th></th></tr></thead>
           <tbody>
-            ${list.length===0 ? `<tr><td colspan="3" class="small">まだありません。</td></tr>` : list.slice(0,30).map(e=>`
+            ${list.length===0 ? `<tr><td colspan="4" class="small">なし</td></tr>` : list.map(e=>`
               <tr>
-                <td>${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
+                <td style="white-space:nowrap;">${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
                 <td>${escapeHtml(e.title||"")}</td>
-                <td>${escapeHtml(e.kind||"")}</td>
+                <td class="muted">${escapeHtml(e.type||"-")}</td>
+                <td style="white-space:nowrap; text-align:right;">
+                  <button class="btn sm" data-edit-event="${e.id}">編集</button>
+                </td>
               </tr>
             `).join("")}
           </tbody>
         </table>
-        <div class="small" style="margin-top:10px;">※この画面でも追加可能（予防接種など “custom” を推奨）</div>
+      </div>
+    </div>
+  `;
+}
+
+
+面でも追加可能（予防接種など “custom” を推奨）</div>
       </div>
     </div>
   `;
@@ -645,6 +811,55 @@ function wireViewEvents(){
   if(btnOpenMaster) btnOpenMaster.addEventListener("click", ()=> window.open("./data/master.json","_blank"));
   const btnOpenRules = $("#btnOpenRules");
   if(btnOpenRules) btnOpenRules.addEventListener("click", ()=> window.open("./firestore.rules","_blank"));
+
+  // family
+  const btnAddFamily = $("#btnAddFamily");
+  if(btnAddFamily){
+    btnAddFamily.addEventListener("click", ()=> openFamilyModal("add"));
+  }
+  const toggleFamilyInactive = $("#toggleFamilyInactive");
+  if(toggleFamilyInactive){
+    toggleFamilyInactive.addEventListener("change", ()=>{
+      state._showInactiveFamily = toggleFamilyInactive.checked;
+      mount();
+    });
+  }
+  $$("[data-edit-family]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.dataset.editFamily;
+      openFamilyModal("edit", state.family.find(x=>x.id===id));
+    });
+  });
+  $$("[data-del-family]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+      const id = btn.dataset.delFamily;
+      if(!confirm("削除しますか？")) return;
+      await deleteDoc(doc(db, "family", id));
+      await reloadAll();
+    });
+  });
+
+  // event suggestions
+  $$("[data-add-suggest]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+      const payload = {
+        title: btn.dataset.sTitle || "",
+        type: btn.dataset.sType || "",
+        date: Number(btn.dataset.sDate||0),
+        sourceType: btn.dataset.sSourceType || "",
+        sourceId: btn.dataset.sSourceId || "",
+        active: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        note: ""
+      };
+      await addDoc(collection(db, "events"), payload);
+      await reloadAll();
+    });
+  });
+
 }
 
 /** =========================
@@ -904,6 +1119,83 @@ function openEventModal(mode, item=null){
     await reloadAll();
   }, { once:true });
 }
+
+
+function openFamilyModal(mode, item=null){
+  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+
+  const v = item || {};
+  const title = (mode==="add") ? "家族を追加" : "家族を編集";
+  const html = `
+    <div class="grid2">
+      <div>
+        <label class="label">名前</label>
+        <input id="f_name" class="input" value="${escapeHtml(v.name||"")}" placeholder="例：萌奈" />
+      </div>
+      <div>
+        <label class="label">続柄</label>
+        <input id="f_relation" class="input" value="${escapeHtml(v.relation||"")}" placeholder="例：妻 / 子 / 夫" />
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:10px;">
+      <div>
+        <label class="label">生年月日</label>
+        <input id="f_birth" class="input" type="date" value="${escapeHtml(v.birthDate||"")}" />
+      </div>
+      <div>
+        <label class="label">有効</label>
+        <div class="row center gap8" style="height:44px;">
+          <input id="f_active" type="checkbox" ${v.active===false?"":"checked"} />
+          <span class="muted">無効にすると各選択肢から外れます</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:10px;">
+      <label class="label">メモ</label>
+      <input id="f_memo" class="input" value="${escapeHtml(v.memo||"")}" placeholder="自由記入" />
+    </div>
+
+    <div class="row gap8 end" style="margin-top:14px;">
+      ${mode==="edit" ? `<button class="btn danger" id="btnDelFamily">削除</button>` : ``}
+      <button class="btn" id="btnSaveFamily">保存</button>
+    </div>
+  `;
+  showModal(title, html);
+
+  $("#btnSaveFamily").addEventListener("click", async ()=>{
+    const name = $("#f_name").value.trim();
+    if(!name){ alert("名前は必須です"); return; }
+    const payload = {
+      name,
+      relation: $("#f_relation").value.trim(),
+      birthDate: $("#f_birth").value || "",
+      memo: $("#f_memo").value.trim(),
+      active: $("#f_active").checked,
+      updatedAt: Date.now()
+    };
+    if(mode==="add"){
+      payload.createdAt = Date.now();
+      await addDoc(collection(db, "family"), payload);
+    }else{
+      await updateDoc(doc(db, "family", v.id), payload);
+    }
+    closeModal();
+    await reloadAll();
+  });
+
+  const delBtn = $("#btnDelFamily");
+  if(delBtn){
+    delBtn.addEventListener("click", async ()=>{
+      if(!confirm("削除しますか？")) return;
+      await deleteDoc(doc(db, "family", v.id));
+      closeModal();
+      await reloadAll();
+    });
+  }
+}
+
 
 /** =========================
  *  8) Routing + App Lifecycle
