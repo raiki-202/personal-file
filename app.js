@@ -14,9 +14,9 @@ import {
  *  1) Firebase Config (EDIT ME)
  * ========================= */
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBkp9ENDP_M_xXwLwqDCrk0KsRr8b4IXKM",
-  authDomain: "kawaharafamilydeta.firebaseapp.com",
-  projectId:"kawaharafamilydeta",
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
 };
 
 const app = initializeApp(FIREBASE_CONFIG);
@@ -660,10 +660,6 @@ function renderEvents(){
 }
 
 
-面でも追加可能（予防接種など “custom” を推奨）</div>
-      </div>
-    </div>
-  `;
 }
 
 function renderSettings(){
