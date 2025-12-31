@@ -659,9 +659,6 @@ function renderEvents(){
   `;
 }
 
-
-}
-
 function renderSettings(){
   return `
     <div class="card">
