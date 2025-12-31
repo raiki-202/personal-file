@@ -14,9 +14,9 @@ import {
  *  1) Firebase Config (EDIT ME)
  * ========================= */
 const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
+  apiKey: "AIzaSyBkp9ENDP_M_xXwLwqDCrk0KsRr8b4IXKM",
+  authDomain: "kawaharafamilydeta.firebaseapp.com",
+  projectId:"kawaharafamilydeta",
 };
 
 const app = initializeApp(FIREBASE_CONFIG);
