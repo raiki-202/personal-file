@@ -255,3 +255,21 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   .btn{transition:none}
   .btn:active{transform:none}
 }
+
+
+/* =========================
+   Modal overlay fix
+   - index.html uses .modalOverlay (#modalOverlay)
+   - this ensures the modal is a true popup, not rendered at page bottom
+========================= */
+.modalOverlay{
+  position:fixed; inset:0;
+  background: rgba(0,0,0,.55);
+  display:none; /* JS toggles to flex */
+  align-items:flex-end; justify-content:center;
+  padding:16px;
+  z-index:50;
+}
+@media (min-width: 641px){
+  .modalOverlay{align-items:center;}
+}
