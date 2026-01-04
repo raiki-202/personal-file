@@ -40,11 +40,7 @@ const state = {
   creditCards: [],
   cars: [],
   homes: [],
-  insurances: [],
-  homeLoans: [],
-  homeEquipments: [],
-  route: "home",
-  _showInactiveFamily: false
+  route:"home"
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -200,13 +196,14 @@ function mount(){
   else if(state.route==="money") view.innerHTML = renderMoney();
   else if(state.route==="insurance") view.innerHTML = renderInsurance();
   else if(state.route==="family") view.innerHTML = renderFamily();
-  else if(state.route==="homeInfo") view.innerHTML = renderHomeInfo();
-  else if(state.route==="car") view.innerHTML = renderCars();
+  else if(state.route==="housing") view.innerHTML = renderHousing();
+  else if(state.route==="car") view.innerHTML = renderCar();
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
   else view.innerHTML = renderHome();
   wireViewEvents();
 }
+
 
 function renderHome(){
   const {income, expense, transfer, net} = sumsByType();
@@ -285,6 +282,117 @@ function renderHome(){
     </div>
   `;
 }
+
+
+function renderFamily(){
+  const list = (state.family||[]);
+  const showInactive = !!state._showInactiveFamily;
+  const rows = list
+    .filter(x=> showInactive ? true : (x.active!==false))
+    .map(x=>{
+      const bd = x.birthDate ? escapeHtml(x.birthDate) : "-";
+      const rel = x.relation ? escapeHtml(x.relation) : "-";
+      const memo = x.memo ? escapeHtml(x.memo) : "";
+      const inactive = (x.active===false);
+      return `
+        <tr class="${inactive?'dim':''}">
+          <td>${escapeHtml(x.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
+          <td>${rel}</td>
+          <td>${bd}</td>
+          <td class="muted">${memo}</td>
+          <td class="right">
+            <button class="btn mini" data-edit-family="${x.id}">編集</button>
+            <button class="btn mini danger" data-del-family="${x.id}">削除</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">家族</h2>
+        <div class="spacer"></div>
+        <label class="chip">
+          <input id="toggleFamilyInactive" type="checkbox" ${showInactive?"checked":""}/>
+          <span>無効も表示</span>
+        </label>
+        <button class="btn" id="btnAddFamily">＋追加</button>
+      </div>
+      <div class="sep"></div>
+
+      <div class="tableWrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>続柄</th>
+              <th>生年月日</th>
+              <th>メモ</th>
+              <th class="right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr><td colspan="5" class="muted">まだありません。</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="muted small" style="margin-top:10px;">
+        ・家族の誕生日などは「定期イベント（90日以内）」に自動で拾います（実装済み/準備中）。
+      </div>
+    </div>
+  `;
+}
+
+
+
+function renderCar(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">車</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="muted small">車名・名義・保険・点検/車検などをここで管理できるようにします。</div>
+    </div>
+  `;
+}
+
+
+
+function renderHousing(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">住宅</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="muted small">住宅の基本情報／ローン／設備（住宅に統合）をここで管理できるようにします。</div>
+    </div>
+  `;
+}
+
+
+
+function renderInsurance(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">保険</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="muted small">まずはタブの配置を整えています。次に「保険一覧＋追加/編集」を実装します。</div>
+    </div>
+  `;
+}
+
 
 function renderMoney(){
   const tabs = [
@@ -466,121 +574,6 @@ function renderFixed(){
       </div>
     </div>
   `;
-}
-
-
-
-function renderInsurance(){
-  return `
-    <section class="card">
-      <div class="row between center">
-        <h2 style="margin:0;">保険</h2>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="muted" style="margin-top:10px;">
-        ここは次のステップで CRUD（追加/編集/削除）を入れます。
-      </div>
-    </section>
-  `;
-}
-
-function renderHomeInfo(){
-  return `
-    <section class="card">
-      <div class="row between center">
-        <h2 style="margin:0;">住宅</h2>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="muted" style="margin-top:10px;">
-        住宅基本情報 / ローン / 設備（住宅に統合）をここでまとめます。
-      </div>
-    </section>
-  `;
-}
-
-function renderCars(){
-  return `
-    <section class="card">
-      <div class="row between center">
-        <h2 style="margin:0;">車</h2>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="muted" style="margin-top:10px;">
-        ここは次のステップで CRUD（追加/編集/削除）を入れます。
-      </div>
-    </section>
-  `;
-}
-
-function renderFamily(){
-  const showInactive = !!state._showInactiveFamily;
-  const list = (state.family || []).filter(f=> showInactive ? true : (f.active !== false));
-  const rows = list.map(f=>{
-    const age = f.birthDate ? calcAge(f.birthDate) : "";
-    const activeBadge = (f.active === false) ? `<span class="badge" style="margin-left:6px;">無効</span>` : "";
-    return `
-      <tr>
-        <td>
-          <div class="row center gap8">
-            <div style="font-weight:700;">${escapeHtml(f.name||"")}</div>
-            ${activeBadge}
-          </div>
-        </td>
-        <td>${escapeHtml(f.relation||"")}</td>
-        <td>${escapeHtml(f.birthDate||"")}</td>
-        <td>${age ? `${age}歳` : ""}</td>
-        <td class="muted">${escapeHtml(f.memo||"")}</td>
-        <td style="white-space:nowrap; text-align:right;">
-          <button class="btn small" data-edit-family="${f.id}">編集</button>
-          <button class="btn small danger" data-del-family="${f.id}">削除</button>
-        </td>
-      </tr>
-    `;
-  }).join("");
-
-  return `
-    <section class="card">
-      <div class="row between center">
-        <div class="row center gap10">
-          <h2 style="margin:0;">家族</h2>
-          <label class="row center gap8" style="user-select:none;">
-            <input id="toggleFamilyInactive" type="checkbox" ${showInactive?"checked":""}/>
-            <span class="muted">無効も表示</span>
-          </label>
-        </div>
-        <button class="btn" id="btnAddFamily">＋追加</button>
-      </div>
-
-      <div style="margin-top:12px; overflow:auto;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th style="min-width:160px;">名前</th>
-              <th style="min-width:120px;">続柄</th>
-              <th style="min-width:140px;">生年月日</th>
-              <th style="min-width:80px;">年齢</th>
-              <th>メモ</th>
-              <th style="min-width:140px;"></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="6" class="muted">まだありません。</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
-
-function calcAge(birthDateStr){
-  // birthDateStr: YYYY-MM-DD
-  const d = new Date(birthDateStr);
-  if(isNaN(d.getTime())) return "";
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if(m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
-  return age;
 }
 
 
@@ -990,6 +983,10 @@ function hideModal(){
   $("#modalOverlay").setAttribute("aria-hidden","true");
   $("#modalBody").innerHTML = "";
 }
+
+function closeModal(){
+  hideModal();
+}
 $("#modalClose").addEventListener("click", hideModal);
 $("#modalOverlay").addEventListener("click", (e)=>{
   if(e.target.id==="modalOverlay") hideModal();
@@ -1295,7 +1292,7 @@ function openFamilyModal(mode, item=null){
     }else{
       await updateDoc(doc(db, "family", v.id), payload);
     }
-    hideModal();
+    closeModal();
     await reloadAll();
   });
 
@@ -1304,7 +1301,7 @@ function openFamilyModal(mode, item=null){
     delBtn.addEventListener("click", async ()=>{
       if(!confirm("削除しますか？")) return;
       await deleteDoc(doc(db, "family", v.id));
-      hideModal();
+      closeModal();
       await reloadAll();
     });
   }
@@ -1365,13 +1362,6 @@ $("#btnLogout").addEventListener("click", async ()=>{ await signOut(auth); });
 $$("#tabs .tab").forEach(btn=>{
   btn.addEventListener("click", ()=> navigate(btn.dataset.route));
 });
-
-// brand click -> home
-const brandHome = document.getElementById("brandHome");
-if(brandHome){
-  brandHome.addEventListener("click", ()=> navigate("home"));
-}
-
 
 // login
 $("#btnLogin").addEventListener("click", async ()=>{
