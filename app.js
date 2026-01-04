@@ -40,7 +40,11 @@ const state = {
   creditCards: [],
   cars: [],
   homes: [],
-  route: "money"
+  insurances: [],
+  homeLoans: [],
+  homeEquipments: [],
+  route: "home",
+  _showInactiveFamily: false
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -192,14 +196,15 @@ function setActiveTab(route){
 
 function mount(){
   const view = $("#appView");
-  if(state.route==="money") view.innerHTML = renderMoney();
+  if(state.route==="home") view.innerHTML = renderHome();
+  else if(state.route==="money") view.innerHTML = renderMoney();
   else if(state.route==="insurance") view.innerHTML = renderInsurance();
   else if(state.route==="family") view.innerHTML = renderFamily();
   else if(state.route==="homeInfo") view.innerHTML = renderHomeInfo();
-  else if(state.route==="car") view.innerHTML = renderCar();
+  else if(state.route==="car") view.innerHTML = renderCars();
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
-  else view.innerHTML = renderMoney();
+  else view.innerHTML = renderHome();
   wireViewEvents();
 }
 
@@ -464,6 +469,121 @@ function renderFixed(){
 }
 
 
+
+function renderInsurance(){
+  return `
+    <section class="card">
+      <div class="row between center">
+        <h2 style="margin:0;">保険</h2>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="muted" style="margin-top:10px;">
+        ここは次のステップで CRUD（追加/編集/削除）を入れます。
+      </div>
+    </section>
+  `;
+}
+
+function renderHomeInfo(){
+  return `
+    <section class="card">
+      <div class="row between center">
+        <h2 style="margin:0;">住宅</h2>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="muted" style="margin-top:10px;">
+        住宅基本情報 / ローン / 設備（住宅に統合）をここでまとめます。
+      </div>
+    </section>
+  `;
+}
+
+function renderCars(){
+  return `
+    <section class="card">
+      <div class="row between center">
+        <h2 style="margin:0;">車</h2>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="muted" style="margin-top:10px;">
+        ここは次のステップで CRUD（追加/編集/削除）を入れます。
+      </div>
+    </section>
+  `;
+}
+
+function renderFamily(){
+  const showInactive = !!state._showInactiveFamily;
+  const list = (state.family || []).filter(f=> showInactive ? true : (f.active !== false));
+  const rows = list.map(f=>{
+    const age = f.birthDate ? calcAge(f.birthDate) : "";
+    const activeBadge = (f.active === false) ? `<span class="badge" style="margin-left:6px;">無効</span>` : "";
+    return `
+      <tr>
+        <td>
+          <div class="row center gap8">
+            <div style="font-weight:700;">${escapeHtml(f.name||"")}</div>
+            ${activeBadge}
+          </div>
+        </td>
+        <td>${escapeHtml(f.relation||"")}</td>
+        <td>${escapeHtml(f.birthDate||"")}</td>
+        <td>${age ? `${age}歳` : ""}</td>
+        <td class="muted">${escapeHtml(f.memo||"")}</td>
+        <td style="white-space:nowrap; text-align:right;">
+          <button class="btn small" data-edit-family="${f.id}">編集</button>
+          <button class="btn small danger" data-del-family="${f.id}">削除</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <section class="card">
+      <div class="row between center">
+        <div class="row center gap10">
+          <h2 style="margin:0;">家族</h2>
+          <label class="row center gap8" style="user-select:none;">
+            <input id="toggleFamilyInactive" type="checkbox" ${showInactive?"checked":""}/>
+            <span class="muted">無効も表示</span>
+          </label>
+        </div>
+        <button class="btn" id="btnAddFamily">＋追加</button>
+      </div>
+
+      <div style="margin-top:12px; overflow:auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="min-width:160px;">名前</th>
+              <th style="min-width:120px;">続柄</th>
+              <th style="min-width:140px;">生年月日</th>
+              <th style="min-width:80px;">年齢</th>
+              <th>メモ</th>
+              <th style="min-width:140px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr><td colspan="6" class="muted">まだありません。</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function calcAge(birthDateStr){
+  // birthDateStr: YYYY-MM-DD
+  const d = new Date(birthDateStr);
+  if(isNaN(d.getTime())) return "";
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if(m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return age;
+}
+
+
 function renderEvents(){
   const list = (state.events||[]).filter(e=>e.active!==false);
   const soon = list.filter(e=>withinDays(Number(e.date||0), 90));
@@ -700,60 +820,6 @@ function renderSettings(){
       <div class="small">
         次の段階で、保険/カード/車/家/家族ページを追加して、固定費と targetRef でリンクします。<br/>
         まずはこのDL版で「月末入力」「口座残高」「固定費」「90日期限」を動かせます。
-      </div>
-    </div>
-  `;
-}
-
-
-function renderInsurance(){
-  return `
-    <div class="card">
-      <div class="row">
-        <h2 class="h1">保険</h2>
-        <div class="spacer"></div>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="sep"></div>
-      <div class="small muted">
-        ・次のステップで「保険一覧/追加/編集」を実装します。<br/>
-        ・データ保存先：Firestore /insurances
-      </div>
-    </div>
-  `;
-}
-
-
-function renderHomeInfo(){
-  return `
-    <div class="card">
-      <div class="row">
-        <h2 class="h1">住宅</h2>
-        <div class="spacer"></div>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="sep"></div>
-      <div class="small muted">
-        ・次のステップで「基本情報/ローン/設備」をここにまとめます。<br/>
-        ・保存先：/homes /homeLoans /homeEquipments
-      </div>
-    </div>
-  `;
-}
-
-
-function renderCar(){
-  return `
-    <div class="card">
-      <div class="row">
-        <h2 class="h1">車</h2>
-        <div class="spacer"></div>
-        <span class="badge">準備中</span>
-      </div>
-      <div class="sep"></div>
-      <div class="small muted">
-        ・次のステップで「車一覧/追加/編集」を実装します。<br/>
-        ・保存先：/cars
       </div>
     </div>
   `;
@@ -1229,7 +1295,7 @@ function openFamilyModal(mode, item=null){
     }else{
       await updateDoc(doc(db, "family", v.id), payload);
     }
-    closeModal();
+    hideModal();
     await reloadAll();
   });
 
@@ -1238,7 +1304,7 @@ function openFamilyModal(mode, item=null){
     delBtn.addEventListener("click", async ()=>{
       if(!confirm("削除しますか？")) return;
       await deleteDoc(doc(db, "family", v.id));
-      closeModal();
+      hideModal();
       await reloadAll();
     });
   }
@@ -1299,6 +1365,13 @@ $("#btnLogout").addEventListener("click", async ()=>{ await signOut(auth); });
 $$("#tabs .tab").forEach(btn=>{
   btn.addEventListener("click", ()=> navigate(btn.dataset.route));
 });
+
+// brand click -> home
+const brandHome = document.getElementById("brandHome");
+if(brandHome){
+  brandHome.addEventListener("click", ()=> navigate("home"));
+}
+
 
 // login
 $("#btnLogin").addEventListener("click", async ()=>{
