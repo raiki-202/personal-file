@@ -40,7 +40,7 @@ const state = {
   creditCards: [],
   cars: [],
   homes: [],
-  route: "home"
+  route: "money"
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -170,54 +170,6 @@ function mergedBalances(){
   return [...base.values()];
 }
 
-
-function computedBalances(){
-  // mergedBalances() に対して、当月 entries（入金/資金移動）の影響を“表示上”だけ反映
-  // ※月末に「残高を入力/更新」した場合はその値が優先され、ここで更に動きを乗せます。
-  const base = mergedBalances().map(x=>({
-    id: x.id,
-    balance: Number(x.balance||0),
-    purposeBalances: Array.isArray(x.purposeBalances) ? x.purposeBalances.map(p=>({id:p.id, balance:Number(p.balance||0)})) : []
-  }));
-  const map = new Map(base.map(x=>[x.id, x]));
-
-  const addBal = (id, delta)=>{
-    if(!id) return;
-    if(!map.has(id)) map.set(id, {id, balance:0, purposeBalances:[]});
-    map.get(id).balance = Number(map.get(id).balance||0) + Number(delta||0);
-  };
-  const addPurpose = (id, purposeId, delta)=>{
-    if(!id || !purposeId) return;
-    if(!map.has(id)) map.set(id, {id, balance:0, purposeBalances:[]});
-    const acc = map.get(id);
-    acc.purposeBalances = acc.purposeBalances || [];
-    const hit = acc.purposeBalances.find(p=>p.id===purposeId);
-    if(hit) hit.balance = Number(hit.balance||0) + Number(delta||0);
-    else acc.purposeBalances.push({id: purposeId, balance: Number(delta||0)});
-  };
-
-  for(const e of (state.entries||[])){
-    const amt = Number(e.amount||0);
-    if(!amt) continue;
-
-    if(e.type==="income"){
-      // 収入：保管先（口座）へ加算
-      addBal(e.toAccountId, amt);
-    }else if(e.type==="transfer"){
-      // 資金移動：移動元から減算 → 移動先へ加算
-      addBal(e.fromAccountId, -amt);
-      addBal(e.toAccountId, amt);
-
-      // 住信SBIネット銀行に入れる場合、目的別口座（任意）にも加算
-      if(e.toAccountId==="sbi_net" && e.toPurposeId){
-        addPurpose("sbi_net", e.toPurposeId, amt);
-      }
-    }
-  }
-
-  return [...map.values()];
-}
-
 function sumsByType(){
   let income=0, expense=0, transfer=0;
   for(const e of state.entries){
@@ -240,19 +192,20 @@ function setActiveTab(route){
 
 function mount(){
   const view = $("#appView");
-  if(state.route==="home") view.innerHTML = renderHome();
-  else if(state.route==="money") view.innerHTML = renderMoney();
-  else if(state.route==="accounts") view.innerHTML = renderAccounts();
-  else if(state.route==="fixed") view.innerHTML = renderFixed();
+  if(state.route==="money") view.innerHTML = renderMoney();
+  else if(state.route==="insurance") view.innerHTML = renderInsurance();
   else if(state.route==="family") view.innerHTML = renderFamily();
+  else if(state.route==="homeInfo") view.innerHTML = renderHomeInfo();
+  else if(state.route==="car") view.innerHTML = renderCar();
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
+  else view.innerHTML = renderMoney();
   wireViewEvents();
 }
 
 function renderHome(){
   const {income, expense, transfer, net} = sumsByType();
-  const mb = computedBalances();
+  const mb = mergedBalances();
   const accounts = getAllAccountsFromMaster();
   const nameOf = (id)=> (accounts.find(a=>a.id===id)?.name || id);
 
@@ -385,7 +338,7 @@ function renderMoney(){
 function renderAccounts(){
   const accounts = getAllAccountsFromMaster();
   const nameOf = (id)=> (accounts.find(a=>a.id===id)?.name || id);
-  const mb = computedBalances();
+  const mb = mergedBalances();
   const sbi = mb.find(x=>x.id==="sbi_net");
   const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
 
@@ -509,67 +462,6 @@ function renderFixed(){
     </div>
   `;
 }
-
-function renderFamily(){
-  const list = (state.family || []);
-  const showInactive = !!state._showInactiveFamily;
-  const visible = showInactive ? list : list.filter(f => f.active !== false);
-
-  return `
-    <div class="card">
-      <div class="row gap12">
-        <h2 class="h1">家族</h2>
-        <div class="spacer"></div>
-        <label class="row gap8 small">
-          <input type="checkbox" id="toggleFamilyInactive" ${showInactive ? "checked" : ""}/>
-          無効も表示
-        </label>
-        <button class="btn" id="btnAddFamily">＋追加</button>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="tableWrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>名前</th>
-              <th>続柄</th>
-              <th>生年月日</th>
-              <th>年齢</th>
-              <th>状態</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${visible.length===0 ? `
-              <tr><td colspan="6" class="small muted">まだ登録されていません。</td></tr>
-            ` : visible.map(f=>`
-              <tr>
-                <td>${escapeHtml(f.name||"")}</td>
-                <td>${escapeHtml(f.relation||"")}</td>
-                <td>${f.birthDate ? escapeHtml(f.birthDate) : "-"}</td>
-                <td>${(f.age!=null && f.age!=="") ? escapeHtml(String(f.age)) : "-"}</td>
-                <td>${f.active===false ? `<span class="badge">無効</span>` : `有効`}</td>
-                <td class="right nowrap">
-                  <button class="btn sm secondary" data-edit-family="${escapeHtml(f.id||"")}">編集</button>
-                  <button class="btn sm danger" data-del-family="${escapeHtml(f.id||"")}">削除</button>
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="sep"></div>
-      <div class="small muted">
-        ※誕生日などの期限は「定期イベント」画面で90日以内候補として表示されます。
-      </div>
-    </div>
-  `;
-}
-
-
 
 
 function renderEvents(){
@@ -813,6 +705,60 @@ function renderSettings(){
   `;
 }
 
+
+function renderInsurance(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">保険</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="small muted">
+        ・次のステップで「保険一覧/追加/編集」を実装します。<br/>
+        ・データ保存先：Firestore /insurances
+      </div>
+    </div>
+  `;
+}
+
+
+function renderHomeInfo(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">住宅</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="small muted">
+        ・次のステップで「基本情報/ローン/設備」をここにまとめます。<br/>
+        ・保存先：/homes /homeLoans /homeEquipments
+      </div>
+    </div>
+  `;
+}
+
+
+function renderCar(){
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">車</h2>
+        <div class="spacer"></div>
+        <span class="badge">準備中</span>
+      </div>
+      <div class="sep"></div>
+      <div class="small muted">
+        ・次のステップで「車一覧/追加/編集」を実装します。<br/>
+        ・保存先：/cars
+      </div>
+    </div>
+  `;
+}
+
 function wireViewEvents(){
   // internal nav buttons
   $$("[data-go]").forEach(b=>{
@@ -983,58 +929,16 @@ $("#modalOverlay").addEventListener("click", (e)=>{
   if(e.target.id==="modalOverlay") hideModal();
 });
 
-
 function openEntryModal(mode, entry=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-
   const type = state._moneyTab || "income";
-  const cats = type==="income"
-    ? (state.master.incomeCategories||[])
-    : (type==="expense" ? (state.master.expenseCategories||[]) : (state.master.transferCategories||[]));
-
-  const accounts = getAllAccountsFromMaster();
-  const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
+  const cats = type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories);
 
   const occurred = entry?.occurredAt ? new Date(Number(entry.occurredAt)) : new Date();
   const yyyy = occurred.getFullYear();
   const mm = String(occurred.getMonth()+1).padStart(2,"0");
   const dd = String(occurred.getDate()).padStart(2,"0");
   const dateStr = `${yyyy}-${mm}-${dd}`;
-
-  // defaults
-  const defTo = entry?.toAccountId || (accounts[0]?.id || "");
-  const defFrom = entry?.fromAccountId || (accounts[0]?.id || "");
-  const defTransferTo = entry?.toAccountId || (accounts[0]?.id || "");
-  const defPurpose = entry?.toPurposeId || "";
-
-  const accountSelect = (id, selected)=>`
-    <select id="${id}" class="input">
-      ${accounts.map(a=>`<option value="${escapeHtml(a.id)}" ${a.id===selected?"selected":""}>${escapeHtml(a.name)}</option>`).join("")}
-    </select>
-  `;
-
-  const extraFields = (type==="income") ? `
-      <div>
-        <div class="small">保管先（口座）</div>
-        ${accountSelect("m_toAccount", defTo)}
-      </div>
-  ` : (type==="transfer") ? `
-      <div>
-        <div class="small">移動元（口座）</div>
-        ${accountSelect("m_fromAccount", defFrom)}
-      </div>
-      <div>
-        <div class="small">移動先（口座）</div>
-        ${accountSelect("m_toAccount", defTransferTo)}
-      </div>
-      <div id="purposeWrap" style="display:none;">
-        <div class="small">目的別口座（任意）</div>
-        <select id="m_toPurpose" class="input">
-          <option value="" ${defPurpose===""?"selected":""}>（未選択）</option>
-          ${sbiPurpose.map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===defPurpose?"selected":""}>${escapeHtml(p.name)}</option>`).join("")}
-        </select>
-      </div>
-  ` : ``;
 
   showModal(mode==="add" ? "入力を追加" : "入力を編集", `
     <div class="formGrid">
@@ -1044,9 +948,6 @@ function openEntryModal(mode, entry=null){
           ${cats.map(c=>`<option ${c===(entry?.category||cats[0])?"selected":""}>${escapeHtml(c)}</option>`).join("")}
         </select>
       </div>
-
-      ${extraFields}
-
       <div>
         <div class="small">金額</div>
         <input id="m_amount" class="input" type="number" inputmode="numeric" value="${Number(entry?.amount||0)}" />
@@ -1067,23 +968,6 @@ function openEntryModal(mode, entry=null){
     </div>
   `);
 
-  // purpose toggle (transfer + toAccount === sbi_net)
-  const purposeWrap = $("#purposeWrap");
-  const toSel = $("#m_toAccount");
-  function syncPurpose(){
-    if(!purposeWrap || !toSel) return;
-    const show = (type==="transfer" && toSel.value==="sbi_net");
-    purposeWrap.style.display = show ? "block" : "none";
-    if(!show){
-      const p = $("#m_toPurpose");
-      if(p) p.value = "";
-    }
-  }
-  if(toSel){
-    toSel.addEventListener("change", syncPurpose);
-    syncPurpose();
-  }
-
   $("#m_save").addEventListener("click", async ()=>{
     const category = $("#m_category").value;
     const amount = Number($("#m_amount").value||0);
@@ -1095,15 +979,6 @@ function openEntryModal(mode, entry=null){
       type, category, amount, note, occurredAt,
       updatedAt: Date.now()
     };
-
-    // extra fields
-    if(type==="income"){
-      payload.toAccountId = $("#m_toAccount")?.value || "";
-    }else if(type==="transfer"){
-      payload.fromAccountId = $("#m_fromAccount")?.value || "";
-      payload.toAccountId = $("#m_toAccount")?.value || "";
-      payload.toPurposeId = $("#m_toPurpose")?.value || ""; // 未選択OK（空）
-    }
 
     if(mode==="add"){
       payload.createdAt = Date.now();
@@ -1354,7 +1229,7 @@ function openFamilyModal(mode, item=null){
     }else{
       await updateDoc(doc(db, "family", v.id), payload);
     }
-    hideModal();
+    closeModal();
     await reloadAll();
   });
 
@@ -1363,7 +1238,7 @@ function openFamilyModal(mode, item=null){
     delBtn.addEventListener("click", async ()=>{
       if(!confirm("削除しますか？")) return;
       await deleteDoc(doc(db, "family", v.id));
-      hideModal();
+      closeModal();
       await reloadAll();
     });
   }
