@@ -156,7 +156,7 @@ async function boot(){
   state.monthKey = mk;
 
   const ml = $("#monthLabel");
-　　if(ml) ml.textContent = mk;
+  if (ml) ml.textContent = mk;
 
   await loadMasters();
   await reloadAll();
@@ -1298,8 +1298,3 @@ function bindPageActions(){
   $("#btnAddLoan")?.addEventListener("click", ()=> toast("ローン追加：次の改善でフォーム接続します"));
   $("#btnAddEq")?.addEventListener("click", ()=> toast("設備追加：次の改善でフォーム接続します"));
 }
-
-/* =========================
-   Missing render stubs (safe)
-   ※ index.html に存在しない場合も落ちないように
-========================= */
