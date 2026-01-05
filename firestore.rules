@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && userDoc().data.active == true;
+    }
+
+    function isAdmin() {
+      return isActiveUser()
+        && userDoc().data.role == "admin";
+    }
+
+    function canEdit() {
+      return isActiveUser()
+        && (userDoc().data.role in ["admin","editor"]);
+    }
+
+    // users: adminのみ管理（本人の閲覧は可）
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if isAdmin();
+    }
+
+    // 月末入力（収入/支出/資金移動）
+    match /months/{monthId}/entries/{docId} {
+      allow read: if isActiveUser();
+      allow create, update, delete: if canEdit();
+    }
+
+    // 口座残高スナップショット
+    match /months/{monthId}/balances/{accountId} {
+      allow read: if isActiveUser();
+      allow create, update, delete: if canEdit();
+    }
+
+    // 固定費・保険・カード・車・家・家族・イベント
+    match /fixedCosts/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /insurances/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /creditCards/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /cars/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /homes/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /homeLoans/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /homeEquipments/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /family/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /people_persons/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /people_health/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+    match /events/{id} { allow read: if isActiveUser(); allow write: if canEdit(); }
+
+    // それ以外は閉じる
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
