@@ -119,10 +119,22 @@ function closeModal(){
    Auth
 ========================= */
 onAuthStateChanged(auth, async (user)=>{
+  const isLoginPage =
+    location.pathname.endsWith("/login.html") ||
+    location.pathname.endsWith("login.html");
+
+  // 未ログイン
   if(!user){
-    location.href = "login.html";
+    if(!isLoginPage) location.href = "login.html";
     return;
   }
+
+  // ログイン済みで login.html にいる場合
+  if(isLoginPage){
+    location.href = "index.html";
+    return;
+  }
+
   state.user = user;
   state.uid = user.uid;
   await boot();
@@ -143,7 +155,8 @@ async function boot(){
   const mk = urlMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
   state.monthKey = mk;
 
-  $("#monthLabel").textContent = mk;
+  const ml = $("#monthLabel");
+　　if(ml) ml.textContent = mk;
 
   await loadMasters();
   await reloadAll();
