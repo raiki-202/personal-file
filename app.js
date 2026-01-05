@@ -1307,3 +1307,4 @@ function renderInsurance(){ /* overridden above if exists */ }
 function renderCar(){ /* overridden above if exists */ }
 function renderEvents(){ /* overridden above if exists */ }
 function renderSettings(){ /* overridden above if exists */ }
+});
