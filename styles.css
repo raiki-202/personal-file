@@ -102,7 +102,7 @@ small{color:var(--muted)}
 
 .hr{height:1px; background:var(--line); margin:14px 0}
 
-.input, select, textarea{
+.input, input, select, textarea{
   width:100%;
   min-height: var(--tap);
   padding:10px 12px;
@@ -111,8 +111,10 @@ small{color:var(--muted)}
   background: rgba(0,0,0,.22);
   color:var(--text);
   outline:none;
+  /* iOS Safari: prevent tap-to-zoom on form fields */
+  font-size:16px;
 }
-.input:focus, select:focus, textarea:focus{
+.input:focus, input:focus, select:focus, textarea:focus{
   border-color: var(--line2);
   background: rgba(0,0,0,.28);
 }
@@ -236,6 +238,16 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   .kpis{grid-template-columns: 1fr 1fr}
   .grid.cols2{grid-template-columns: 1fr}
   .grid.cols3{grid-template-columns: 1fr}
+
+  /* iPhone: allow horizontal scroll inside cards (tables won't get squished) */
+  .card{
+    overflow-x:auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table{
+    min-width: 520px;
+  }
+
   .tabs{
     flex-wrap:nowrap;
     overflow:auto;
