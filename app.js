@@ -1303,8 +1303,3 @@ function bindPageActions(){
    Missing render stubs (safe)
    ※ index.html に存在しない場合も落ちないように
 ========================= */
-function renderInsurance(){ /* overridden above if exists */ }
-function renderCar(){ /* overridden above if exists */ }
-function renderEvents(){ /* overridden above if exists */ }
-function renderSettings(){ /* overridden above if exists */ }
-});
