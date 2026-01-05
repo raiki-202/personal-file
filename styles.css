@@ -102,7 +102,7 @@ small{color:var(--muted)}
 
 .hr{height:1px; background:var(--line); margin:14px 0}
 
-.input, input, select, textarea{
+.input, select, textarea{
   width:100%;
   min-height: var(--tap);
   padding:10px 12px;
@@ -111,10 +111,13 @@ small{color:var(--muted)}
   background: rgba(0,0,0,.22);
   color:var(--text);
   outline:none;
-  /* iOS Safari: prevent tap-to-zoom on form fields */
+}
+
+/* ===== iOS: prevent auto-zoom on form focus (font-size must be >=16px) ===== */
+input, textarea, select{
   font-size:16px;
 }
-.input:focus, input:focus, select:focus, textarea:focus{
+.input:focus, select:focus, textarea:focus{
   border-color: var(--line2);
   background: rgba(0,0,0,.28);
 }
@@ -171,6 +174,13 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   background: rgba(255,255,255,.03);
 }
 .table tr:last-child td{border-bottom:none}
+
+/* Table scroll container (mobile-friendly) */
+.tableWrap{
+  width:100%;
+  overflow-x:auto;
+  -webkit-overflow-scrolling: touch;
+}
 
 .pill{
   display:inline-flex;
@@ -238,16 +248,6 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   .kpis{grid-template-columns: 1fr 1fr}
   .grid.cols2{grid-template-columns: 1fr}
   .grid.cols3{grid-template-columns: 1fr}
-
-  /* iPhone: allow horizontal scroll inside cards (tables won't get squished) */
-  .card{
-    overflow-x:auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .table{
-    min-width: 520px;
-  }
-
   .tabs{
     flex-wrap:nowrap;
     overflow:auto;
@@ -259,6 +259,10 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   .tab{flex:0 0 auto}
   .modalBackdrop{align-items:flex-end}
   .modal{border-radius: 18px 18px 0 0; max-height: 92vh}
+  /* Make tables readable on iPhone: prevent per-character wrapping, allow horizontal scroll */
+  .table{min-width: 720px;}
+  .table th{white-space:nowrap;}
+  .table td{white-space:nowrap; word-break: keep-all;}
   .table th,.table td{font-size:12px; padding:10px 8px}
 }
 
@@ -284,73 +288,4 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
 }
 @media (min-width: 641px){
   .modalOverlay{align-items:center;}
-}
-
-/* ===== utilities used by app.js ===== */
-.sep{height:1px; background:var(--line); margin:12px 0}
-.right{text-align:right}
-.muted{color:var(--muted)}
-.small{font-size:12px; color:var(--muted)}
-.h1{font-size:16px; font-weight:800}
-.h2{font-size:14px; font-weight:700}
-.dim{opacity:.6}
-
-.linkBtn{
-  background:transparent;
-  border:0;
-  padding:0;
-  color:var(--text);
-  font-weight:700;
-  text-decoration:underline;
-  cursor:pointer;
-}
-
-.btn.mini{min-height:34px; padding:7px 10px; border-radius:10px; font-size:12px}
-.btn.sm{min-height:36px; padding:8px 12px; border-radius:10px; font-size:12px}
-
-.formGrid{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
-.grid2{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
-
-.chip{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 10px;
-  border:1px solid var(--line);
-  border-radius:999px;
-  background: rgba(255,255,255,.03);
-  color: var(--muted);
-  font-size:12px;
-}
-
-.linkBtn{
-  background:none;
-  border:none;
-  color:var(--text);
-  padding:0;
-  cursor:pointer;
-  text-decoration:underline;
-  text-underline-offset:3px;
-}
-.linkBtn:hover{opacity:.9}
-
-/* equipment popover */
-.popover{
-  position:fixed;
-  z-index:70;
-  max-width:min(380px, calc(100vw - 24px));
-  background: rgba(20,20,21,.96);
-  border:1px solid var(--line);
-  border-radius:14px;
-  box-shadow: var(--shadow);
-  padding:12px;
-}
-.popover .row{gap:10px}
-.popover .title{font-weight:800}
-.popover .close{
-  border:1px solid var(--line);
-  background: rgba(255,255,255,.04);
-  border-radius:10px;
-  padding:6px 10px;
-  cursor:pointer;
 }
