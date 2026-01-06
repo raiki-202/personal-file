@@ -866,7 +866,9 @@ function renderMoneyEntries(){
         const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
         const now = new Date();
         const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
-        const rows = visible.map(c=>{
+        // NOTE: renderMoneyEntries() のスコープには「visible」が無いので、ここで表示対象カードを確定する
+        const cards = (state.creditCards||[]).filter(c=> (c.active!==false) && (c.status!=="stopped"));
+        const rows = cards.map(c=>{
           const up = schedule.filter(s=>s.cardId===c.id && s.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs)[0];
           if(!up) return { cardName:c.cardName||c.id, date:"-", amount:0, payMonth:"-" };
           return { cardName:c.cardName||c.id, date:new Date(up.payDateMs).toLocaleDateString("ja-JP"), amount:up.amount, payMonth: up.payMonth };
