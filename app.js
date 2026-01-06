@@ -49,9 +49,24 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+// =========================
+// Credit card payable (支払予定) virtual account
+// =========================
+// 「クレカ利用＝支出計上」しつつ「銀行残高は引き落とし日まで減らさない」ための仮想口座。
+// 例）楽天カード利用 → 出金元を CC_PAYABLE_ACCOUNT_ID にする。
+//      引落日（27日）に 楽天銀行 → CC_PAYABLE_ACCOUNT_ID の資金移動を入れる。
+const CC_PAYABLE_ACCOUNT_ID = "rakuten_card_payable";
+const CC_PAYABLE_LINK_BANK_ID = "rakuten";
+
 function yen(n){
   const x = Number(n || 0);
   return x.toLocaleString("ja-JP");
+}
+
+function signedYen(n){
+  const x = Number(n || 0);
+  const sign = x < 0 ? "▲" : x > 0 ? "+" : "";
+  return `${sign}${yen(Math.abs(x))}`;
 }
 function monthKey(d=new Date()){
   const y = d.getFullYear();
@@ -258,10 +273,16 @@ function mount(){
 function renderHome(){
   const {income, expense, transfer, net} = sumsByType();
   const mb = mergedBalances();
+  const deltas = accountDeltasFromEntries();
   const accounts = getAllAccountsFromMaster();
   const nameOf = (id)=> (accounts.find(a=>a.id===id)?.name || id);
 
   const totalCash = mb.reduce((s,x)=> s + Number(x.balance||0), 0);
+  const totalCashEst = mb.reduce((s,x)=> s + (Number(x.balance||0) + Number(deltas.get(x.id)||0)), 0);
+  const totalCashEstNoNisa = mb
+    .filter(x=>x.id!=="nisa")
+    .reduce((s,x)=> s + (Number(x.balance||0) + Number(deltas.get(x.id)||0)), 0);
+  const payableEst = (mb.find(x=>x.id===CC_PAYABLE_ACCOUNT_ID)?.balance || 0) + Number(deltas.get(CC_PAYABLE_ACCOUNT_ID)||0);
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
@@ -289,17 +310,26 @@ function renderHome(){
           <h2 class="h1">口座合計（入力/差分反映後）</h2>
           <div class="spacer"></div>
           <span class="badge">合計 ¥${yen(totalCash)}</span>
+          <span class="badge">実質 ¥${yen(totalCashEstNoNisa)}</span>
         </div>
         <div class="sep"></div>
         <table class="table">
           <thead><tr><th>口座</th><th class="right">残高</th></tr></thead>
           <tbody>
-            ${mb.map(a=>`
-              <tr>
-                <td>${escapeHtml(nameOf(a.id))}${a.id==="sbi_net" ? "（目的別あり）":""}</td>
-                <td class="right">¥${yen(a.balance)}</td>
-              </tr>
-            `).join("")}
+            ${mb
+              .filter(a=>a.id!==CC_PAYABLE_ACCOUNT_ID)
+              .map(a=>{
+                const isLinkBank = (a.id===CC_PAYABLE_LINK_BANK_ID);
+                return `
+                  <tr>
+                    <td>
+                      ${escapeHtml(nameOf(a.id))}${a.id==="sbi_net" ? "（目的別あり）":""}
+                      ${isLinkBank && payableEst!==0 ? `<div class="small muted" style="margin-top:2px;">支払予定 ${signedYen(payableEst)}円</div>` : ""}
+                    </td>
+                    <td class="right">¥${yen(a.balance)}</td>
+                  </tr>
+                `;
+              }).join("")}
           </tbody>
         </table>
         <div class="small" style="margin-top:10px;">※表示は bundle（あれば）→ Firestore月末入力で上書き</div>
@@ -783,6 +813,9 @@ function renderAccounts(){
   const accounts = getAllAccountsFromMaster();
   const mb = mergedBalances();
   const deltas = accountDeltasFromEntries();
+  const payableBase = mb.find(x=>x.id===CC_PAYABLE_ACCOUNT_ID)?.balance || 0;
+  const payableDelta = Number(deltas.get(CC_PAYABLE_ACCOUNT_ID)||0);
+  const payableEst = Number(payableBase||0) + payableDelta;
   const sbi = mb.find(x=>x.id==="sbi_net");
   const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
 
@@ -807,12 +840,16 @@ function renderAccounts(){
             </tr>
           </thead>
           <tbody>
-            ${mb.filter(x=>x.id!=="nisa").map(a=>{
+            ${mb.filter(x=>x.id!=="nisa" && x.id!==CC_PAYABLE_ACCOUNT_ID).map(a=>{
               const d = Number(deltas.get(a.id)||0);
               const est = Number(a.balance||0) + d;
+              const isLinkBank = (a.id===CC_PAYABLE_LINK_BANK_ID);
               return `
                 <tr>
-                  <td>${escapeHtml(accountName(a.id))}</td>
+                  <td>
+                    ${escapeHtml(accountName(a.id))}
+                    ${isLinkBank && payableEst!==0 ? `<div class="small muted" style="margin-top:2px;">支払予定 ${signedYen(payableEst)}円</div>` : ""}
+                  </td>
                   <td class="right">¥${yen(a.balance)}</td>
                   <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
                   <td class="right"><b>¥${yen(est)}</b></td>
