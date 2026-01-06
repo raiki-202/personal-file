@@ -211,7 +211,8 @@ function buildCardPaymentSchedule(){
     for(const e of es){
       const st = statementMonthForEntry(c, e);
       if(!st) continue;
-      const payMonth = addMonthsKey(st, 1);
+      const off = Number(c?.paymentMonthOffset||1) || 1;
+      const payMonth = addMonthsKey(st, off);
       const amt = Number(e.amount||0);
       if(!amt) continue;
       byPayMonth.set(payMonth, (byPayMonth.get(payMonth)||0) + amt);
@@ -858,7 +859,49 @@ function renderMoneyEntries(){
 
       <div class="tabs">
         ${tabs.map(t=>`<button class="tab ${t.key===active?"active":""}" data-moneytab="${t.key}">${t.label}</button>`).join("")}
+
       </div>
+
+      ${(()=>{
+        const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+        const now = new Date();
+        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+        const rows = visible.map(c=>{
+          const up = schedule.filter(s=>s.cardId===c.id && s.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs)[0];
+          if(!up) return { cardName:c.cardName||c.id, date:"-", amount:0, payMonth:"-" };
+          return { cardName:c.cardName||c.id, date:new Date(up.payDateMs).toLocaleDateString("ja-JP"), amount:up.amount, payMonth: up.payMonth };
+        });
+        if(!rows.length) return "";
+        const hasAny = rows.some(r=>r.amount!==0);
+        if(!hasAny) return "";
+        return `
+          <div class="sep"></div>
+          <div class="h2">次回支払予定（カード別）</div>
+          <div class="small" style="margin-top:4px;">※締め日・支払日・（必要なら）楽天市場25日締めを反映して自動算出</div>
+          <div style="overflow:auto; margin-top:10px;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>カード</th>
+                  <th class="right">次回支払予定</th>
+                  <th>支払日</th>
+                  <th>対象（支払月）</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(r=>`
+                  <tr>
+                    <td>${escapeHtml(r.cardName)}</td>
+                    <td class="right">${r.amount?`¥${yen(r.amount)}`:"-"}</td>
+                    <td>${escapeHtml(r.date)}</td>
+                    <td>${escapeHtml(r.payMonth)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+      })()}
 
       <div class="sep"></div>
       <table class="table">
@@ -1777,8 +1820,18 @@ function openEntryModal(mode, entry=null){
       </div>
       <div>
         <div class="small">支払日</div>
-        <input id="c_payday" class="input" type="number" inputmode="numeric" min="1" max="31" value="${Number(item?.paymentDay||27)}" />
+        <div>
+        <div class="small">支払タイミング</div>
+        <select id="c_paymo" class="input">
+          <option value="1">翌月</option>
+          <option value="2">翌々月</option>
+        </select>
+        <div class="small" style="margin-top:8px;">支払日</div>
+        <select id="c_payday" class="input">
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
+        </select>
       </div>
+      <</div>
       <div>
         <div class="small">支払口座</div>
         <select id="c_payacc" class="input">
@@ -2006,10 +2059,6 @@ function openCardModal(mode, item=null){
         </select>
       </div>
       <div>
-        <div class="small">支払日</div>
-        <input id="c_payday" class="input" type="number" inputmode="numeric" min="1" max="31" value="${Number(item?.paymentDay||27)}" />
-      </div>
-      <div>
         <div class="small">支払口座</div>
         <select id="c_payacc" class="input">
           ${(state.master.banks||[]).filter(x=>x.active!==false).map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("")}
@@ -2047,6 +2096,8 @@ function openCardModal(mode, item=null){
   
   // prefill
   if($("#c_close")) $("#c_close").value = (item?.closingDay ?? "EOM");
+  if($("#c_paymo")) $("#c_paymo").value = String(item?.paymentMonthOffset ?? 1);
+  if($("#c_payday")) $("#c_payday").value = String(Number(item?.paymentDay||27));
   if($("#c_payacc")) $("#c_payacc").value = (item?.paymentAccountId ?? "rakuten");
   if($("#c_payable")) $("#c_payable").value = (item?.payableAccountId ?? "rakuten_card_payable");
   if($("#c_ex_channel")) $("#c_ex_channel").value = (item?.exceptionChannel ?? (((item?.cardName||"").includes("楽天")) ? "楽天市場" : ""));
@@ -2060,6 +2111,7 @@ $("#c_save").addEventListener("click", async ()=>{
       expiryDate: $("#c_exp").value || "",
 
       closingDay: $("#c_close") ? $("#c_close").value : "EOM",
+      paymentMonthOffset: Number($("#c_paymo") ? $("#c_paymo").value : 1) || 1,
       paymentDay: Number($("#c_payday") ? $("#c_payday").value : 0) || 27,
       paymentAccountId: $("#c_payacc") ? $("#c_payacc").value : "rakuten",
       payableAccountId: $("#c_payable") ? $("#c_payable").value : "rakuten_card_payable",
