@@ -165,31 +165,96 @@ function creditCardName(id){
 function getCreditCardById(id){
   return (state.creditCards||[]).find(x=>x.id===id) || null;
 }
-function computeNextCardPayment(){
-  // based on selected month (state.month: YYYY-MM)
+function ymKey(y,m){ return `${y}-${String(m).padStart(2,"0")}`; }
+function addMonthsKey(key, delta){
+  const [y0,m0]=key.split("-").map(n=>Number(n));
+  let y=y0, m=m0+delta;
+  while(m>12){ y+=1; m-=12; }
+  while(m<1){ y-=1; m+=12; }
+  return ymKey(y,m);
+}
+function lastDayOf(y,m){ return new Date(y, m, 0).getDate(); } // m=1..12
+function paymentDateMsForMonth(card, payMonthKey){
+  const [y,m]=payMonthKey.split("-").map(n=>Number(n));
+  const pd = Number(card?.paymentDay||27) || 27;
+  const d = Math.min(Math.max(pd,1), lastDayOf(y,m));
+  return new Date(y, m-1, d, 0,0,0,0).getTime();
+}
+function statementMonthForEntry(card, entry){
+  const t = Number(entry?.occurredAt||0);
+  if(!t) return null;
+  const d = new Date(t);
+  const y=d.getFullYear(), m=d.getMonth()+1, day=d.getDate();
+  // base closing day
+  const cdRaw = (card?.closingDay ?? "EOM");
+  let cd = (cdRaw==="EOM") ? lastDayOf(y,m) : Number(cdRaw||0);
+  if(!cd || cd<1 || cd>31) cd = lastDayOf(y,m);
+
+  // optional exception by channel (e.g., 楽天市場:25日締め)
+  const ch = (entry?.creditChannel || entry?.channel || "").trim();
+  if(card?.exceptionChannel && ch && ch===card.exceptionChannel){
+    const ex = Number(card.exceptionClosingDay||0);
+    if(ex>=1 && ex<=31) cd = ex;
+  }
+
+  // statement month key
+  if(day<=cd) return ymKey(y,m);
+  return addMonthsKey(ymKey(y,m), 1);
+}
+function buildCardPaymentSchedule(){
   const cards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
-  const entries = (state.entries||[]).filter(e=>e.type==="expense" && (e.paymentMethod==="クレカ") && e.creditCardId);
-  const byCard = [];
+  const entries = (state.entries||[]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ" && e.creditCardId);
+  const items = [];
   for(const c of cards){
-    const total = entries.filter(e=>e.creditCardId===c.id).reduce((s,x)=> s + Number(x.amount||0), 0);
-    if(total!==0){
-      byCard.push({cardId:c.id, cardName:c.cardName||c.id, amount: total});
+    const es = entries.filter(e=>e.creditCardId===c.id);
+    const byPayMonth = new Map(); // payMonthKey -> amount
+    for(const e of es){
+      const st = statementMonthForEntry(c, e);
+      if(!st) continue;
+      const payMonth = addMonthsKey(st, 1);
+      const amt = Number(e.amount||0);
+      if(!amt) continue;
+      byPayMonth.set(payMonth, (byPayMonth.get(payMonth)||0) + amt);
+    }
+    for(const [payMonth, amount] of byPayMonth.entries()){
+      const payDateMs = paymentDateMsForMonth(c, payMonth);
+      items.push({ cardId:c.id, cardName:c.cardName||c.id, payMonth, payDateMs, amount });
     }
   }
-  const sum = byCard.reduce((s,x)=> s + x.amount, 0);
-  // next pay date: next month paymentDay (first card's paymentDay, or 27)
-  const [y,m] = (state.month||"").split("-").map(n=>Number(n));
-  let payDay = 27;
-  // if multiple cards, show earliest upcoming day? for now use minimum paymentDay among cards that have amount
-  const days = byCard.map(x=> Number(getCreditCardById(x.cardId)?.paymentDay||0)).filter(n=>n>0 && n<=31);
-  if(days.length) payDay = Math.min(...days);
-  let py=y, pm=m+1;
-  if(pm===13){ py+=1; pm=1; }
-  const last = new Date(py, pm, 0).getDate();
-  const d = Math.min(payDay, last);
-  const payDate = new Date(py, pm-1, d);
-  const dateStr = isNaN(payDate.getTime()) ? "-" : payDate.toLocaleDateString("ja-JP");
-  return { total: sum, dateStr, byCard };
+  return items;
+}
+function computeNextCardPayment(){
+  // nearest upcoming payment date (today or later), aggregated across cards
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  const upcoming = schedule.filter(x=>x.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs);
+  if(!upcoming.length) return null;
+  const nextDate = upcoming[0].payDateMs;
+  const sameDay = upcoming.filter(x=>x.payDateMs===nextDate);
+  const byCard = sameDay.map(x=>({cardId:x.cardId, cardName:x.cardName, amount:x.amount}));
+  const total = byCard.reduce((s,x)=>s+Number(x.amount||0),0);
+  const dateStr = new Date(nextDate).toLocaleDateString("ja-JP");
+  return { total, dateStr, byCard, payDateMs: nextDate };
+}
+function autoCardPaymentDeltasForMonth(monthKey){
+  // On/after payment day: reflect automatic debit from payment account and clearing payable account (display-only)
+  const deltas = new Map();
+  const schedule = buildCardPaymentSchedule();
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  for(const s of schedule){
+    if(s.payMonth!==monthKey) continue;
+    if(s.payDateMs>today0) continue; // not yet debited
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const payable = card?.payableAccountId || "rakuten_card_payable";
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    deltas.set(payAcc, (deltas.get(payAcc)||0) - amt);
+    deltas.set(payable, (deltas.get(payable)||0) + amt); // reduce liability (toward 0)
+  }
+  return deltas;
 }
 
 function entryAccountLabel(e){
@@ -836,6 +901,20 @@ function renderAccounts(){
   const accounts = getAllAccountsFromMaster();
   const mb = mergedBalances();
   const deltas = accountDeltasFromEntries();
+  const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
+  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+  const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
+  const outstandingByPayAcc = new Map();
+  for(const c of activeCards){
+    const payAcc = c.paymentAccountId || "rakuten";
+    const payableId = c.payableAccountId || "rakuten_card_payable";
+    const pb = (mb.find(x=>x.id===payableId)?.balance||0);
+    const est = Number(pb) + deltaOf(payableId);
+    const out = est<0 ? (-est) : 0;
+    outstandingByPayAcc.set(payAcc, (outstandingByPayAcc.get(payAcc)||0) + out);
+  }
+  const nextPay = computeNextCardPayment();
+
   const sbi = mb.find(x=>x.id==="sbi_net");
   const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
 
@@ -861,11 +940,11 @@ function renderAccounts(){
           </thead>
           <tbody>
             ${mb.filter(x=>x.id!=="nisa").map(a=>{
-              const d = Number(deltas.get(a.id)||0);
+              const d = deltaOf(a.id);
               const est = Number(a.balance||0) + d;
               return `
                 <tr>
-                  <td>${escapeHtml(accountName(a.id))}</td>
+                  <td>${escapeHtml(accountName(a.id))}${(()=>{ const out = Number(outstandingByPayAcc.get(a.id)||0); if(out<=0) return ""; const due = (nextPay && new Date(nextPay.payDateMs).getTime()>=0) ? ` / 次回：${escapeHtml(nextPay.dateStr)}` : ""; return `<div class="small">支払予定：▲¥${yen(out)}${due}</div>`; })()}</td>
                   <td class="right">¥${yen(a.balance)}</td>
                   <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
                   <td class="right"><b>¥${yen(est)}</b></td>
@@ -875,7 +954,7 @@ function renderAccounts(){
           </tbody>
         </table>
 
-        <div class="small" style="margin-top:10px;">※月末残高は bundle（あれば）→ Firestore月末入力で上書き。今月差分は「入出金/移動」の口座指定から集計。</div>
+        <div class="small" style="margin-top:10px;">※月末残高は bundle（あれば）→ Firestore月末入力で上書き。今月差分は「入出金/移動」の口座指定から集計。（※クレカは「支払予定」に積み上げ、支払日を過ぎた分は表示上 自動引落を反映）</div>
 
         ${sbi ? `
           <div class="sep"></div>
@@ -1648,6 +1727,10 @@ function openEntryModal(mode, entry=null){
         <div id="m_cardWrap" style="display:none;">
           <div class="small">クレカ</div>
           <select id="m_card" class="input">${cardOpts}</select>
+          <div class="small" style="margin-top:10px;">利用先（任意）</div>
+          <select id="m_cardChannel" class="input">
+            ${["通常","楽天市場"].map(x=>`<option ${((entry?.creditChannel||"通常")===x)?"selected":""}>${escapeHtml(x)}</option>`).join("")}
+          </select>
           <div class="small" style="margin-top:6px;">※クレカ利用分は「支払予定」に積み上げ、引落日に口座から減ります。</div>
         </div>
       `;
@@ -1744,6 +1827,7 @@ $("#m_save").addEventListener("click", async ()=>{
     const toAccountId = $("#m_toAccount") ? $("#m_toAccount").value : null;
     const paymentMethod = $("#m_payMethod") ? $("#m_payMethod").value : null;
     const creditCardId = $("#m_card") ? $("#m_card").value : null;
+    const creditChannel = $("#m_cardChannel") ? $("#m_cardChannel").value : null;
 
     // expense: when クレカ, post to payable (支払予定) account instead of bank
     let effectiveFrom = fromAccountId;
@@ -1758,6 +1842,7 @@ $("#m_save").addEventListener("click", async ()=>{
       type, category, amount, note, occurredAt,
       paymentMethod: paymentMethod || null,
       creditCardId: effectiveCardId,
+      creditChannel: (paymentMethod==="クレカ") ? (creditChannel||null) : null,
       fromAccountId: effectiveFrom || null,
       toAccountId: toAccountId || null,
       updatedAt: Date.now()
@@ -1914,6 +1999,36 @@ function openCardModal(mode, item=null){
         <input id="c_exp" class="input" placeholder="2026-12" value="${escapeHtml(item?.expiryDate||item?.expireDate||"")}" />
       </div>
       <div>
+        <div class="small">締め日</div>
+        <select id="c_close" class="input">
+          <option value="EOM">末日</option>
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">支払日</div>
+        <input id="c_payday" class="input" type="number" inputmode="numeric" min="1" max="31" value="${Number(item?.paymentDay||27)}" />
+      </div>
+      <div>
+        <div class="small">支払口座</div>
+        <select id="c_payacc" class="input">
+          ${(state.master.banks||[]).filter(x=>x.active!==false).map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">支払予定口座</div>
+        <select id="c_payable" class="input">
+          ${([...(state.master.otherAccounts||[])]).filter(x=>x.active!==false).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">例外締め（任意）</div>
+        <div class="small" style="margin-top:6px;">例：楽天市場だけ25日締めにしたい場合</div>
+        <input id="c_ex_channel" class="input" placeholder="楽天市場" value="${escapeHtml(item?.exceptionChannel||"")}" />
+        <input id="c_ex_day" class="input" type="number" inputmode="numeric" min="1" max="31" placeholder="25" value="${item?.exceptionClosingDay!=null?Number(item.exceptionClosingDay):""}" style="margin-top:8px;" />
+      </div>
+
+      <div>
         <div class="small">状態</div>
         <select id="c_status" class="input">
           ${["active","stopped","inactive"].map(s=>`<option value="${s}" ${(item?.status||"active")===s?"selected":""}>${s}</option>`).join("")}
@@ -1934,6 +2049,8 @@ function openCardModal(mode, item=null){
   if($("#c_close")) $("#c_close").value = (item?.closingDay ?? "EOM");
   if($("#c_payacc")) $("#c_payacc").value = (item?.paymentAccountId ?? "rakuten");
   if($("#c_payable")) $("#c_payable").value = (item?.payableAccountId ?? "rakuten_card_payable");
+  if($("#c_ex_channel")) $("#c_ex_channel").value = (item?.exceptionChannel ?? (((item?.cardName||"").includes("楽天")) ? "楽天市場" : ""));
+  if($("#c_ex_day")) $("#c_ex_day").value = (item?.exceptionClosingDay ?? (((item?.cardName||"").includes("楽天")) ? 25 : ""));
 
 $("#c_save").addEventListener("click", async ()=>{
     const payload = {
@@ -1946,6 +2063,8 @@ $("#c_save").addEventListener("click", async ()=>{
       paymentDay: Number($("#c_payday") ? $("#c_payday").value : 0) || 27,
       paymentAccountId: $("#c_payacc") ? $("#c_payacc").value : "rakuten",
       payableAccountId: $("#c_payable") ? $("#c_payable").value : "rakuten_card_payable",
+      exceptionChannel: $("#c_ex_channel") ? ($("#c_ex_channel").value || "") : "",
+      exceptionClosingDay: ($("#c_ex_day" && $("#c_ex_day").value!=="") ? Number($("#c_ex_day").value) : null),
 
       status: $("#c_status").value || "active",
       memo: $("#c_memo").value || "",
