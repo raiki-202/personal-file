@@ -1103,6 +1103,24 @@ function renderCreditCards(){
   const list = (state.creditCards||[]).slice().sort((a,b)=> (a.cardName||"").localeCompare(b.cardName||""));
   const visible = state._cardShowStopped ? list : list.filter(x=> (x.active!==false) && (x.status!=="stopped"));
 
+  // per-card next payment (today or later)
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  const nextByCard = new Map();
+  schedule
+    .filter(x=>x.payDateMs>=today0)
+    .sort((a,b)=>a.payDateMs-b.payDateMs)
+    .forEach(x=>{ if(!nextByCard.has(x.cardId)) nextByCard.set(x.cardId, x); });
+
+  function ruleLine(c){
+    const close = (c?.closingDay==="EOM" || c?.closingDay==null) ? "末日" : `${c.closingDay}日`;
+    const off = Number(c?.paymentMonthOffset||1)||1;
+    const offTxt = off===2 ? "翌々月" : "翌月";
+    const pd = Number(c?.paymentDay||27)||27;
+    return `締め:${close} / 支払:${offTxt}${pd}日`;
+  }
+
   return `
     <div class="card">
       <div class="row">
@@ -1124,24 +1142,51 @@ function renderCreditCards(){
               <th>会社</th>
               <th>下4桁</th>
               <th>有効期限</th>
+              <th>次回支払</th>
               <th>状態</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            ${visible.length===0 ? `<tr><td colspan="6" class="small">まだありません。</td></tr>` : visible.map(c=>`
+            ${visible.length===0 ? `<tr><td colspan="7" class="small">まだありません。</td></tr>` : visible.map(c=>{
+              const nx = nextByCard.get(c.id);
+              const nxStr = nx ? `${new Date(nx.payDateMs).toLocaleDateString("ja-JP")} / ¥${yen(nx.amount)}` : "-";
+              return `
               <tr class="${(c.active===false||c.status==="stopped")?'dim':''}">
-                <td>${escapeHtml(c.cardName||"")}</td>
+                <td>
+                  ${escapeHtml(c.cardName||"")}
+                  <div class="small muted">${escapeHtml(ruleLine(c))}</div>
+                </td>
                 <td>${escapeHtml(c.issuer||c.company||"-")}</td>
                 <td>${escapeHtml(c.last4||"-")}</td>
                 <td>${escapeHtml(c.expiryDate||c.expireDate||"-")}</td>
+                <td>${escapeHtml(nxStr)}</td>
                 <td>${escapeHtml(c.status|| (c.active===false?"inactive":"active"))}</td>
                 <td class="right">
                   <button class="btn secondary" data-edit-card="${c.id}">編集</button>
                   <button class="btn danger" data-del-card="${c.id}">削除</button>
                 </td>
               </tr>
-            `).join("")}
+            `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sep"></div>
+      <div class="card" style="box-shadow:none;">
+        <div class="h2">カード別：次回支払予定</div>
+        <div class="small muted" style="margin-top:6px;">※今日以降で一番近い支払日をカードごとに表示</div>
+        <div class="sep" style="margin:10px 0;"></div>
+        <table class="table">
+          <thead><tr><th>カード</th><th>支払日</th><th class="right">金額</th></tr></thead>
+          <tbody>
+            ${(visible.length===0) ? `<tr><td colspan="3" class="small">-</td></tr>` : visible.map(c=>{
+              const nx = nextByCard.get(c.id);
+              const d = nx ? new Date(nx.payDateMs).toLocaleDateString("ja-JP") : "-";
+              const a = nx ? `¥${yen(nx.amount)}` : "-";
+              return `<tr><td>${escapeHtml(c.cardName||"")}</td><td style="white-space:nowrap;">${escapeHtml(d)}</td><td class="right" style="white-space:nowrap;">${escapeHtml(a)}</td></tr>`;
+            }).join("")}
           </tbody>
         </table>
       </div>
@@ -2061,6 +2106,19 @@ function openCardModal(mode, item=null){
         </select>
       </div>
       <div>
+        <div class="small">支払タイミング</div>
+        <select id="c_paymo" class="input">
+          <option value="1">翌月</option>
+          <option value="2">翌々月</option>
+        </select>
+      </div>
+      <div>
+        <div class="small">支払日</div>
+        <select id="c_payday" class="input">
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
+        </select>
+      </div>
+      <div>
         <div class="small">支払口座</div>
         <select id="c_payacc" class="input">
           ${(state.master.banks||[]).filter(x=>x.active!==false).map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("")}
@@ -2076,7 +2134,10 @@ function openCardModal(mode, item=null){
         <div class="small">例外締め（任意）</div>
         <div class="small" style="margin-top:6px;">例：楽天市場だけ25日締めにしたい場合</div>
         <input id="c_ex_channel" class="input" placeholder="楽天市場" value="${escapeHtml(item?.exceptionChannel||"")}" />
-        <input id="c_ex_day" class="input" type="number" inputmode="numeric" min="1" max="31" placeholder="25" value="${item?.exceptionClosingDay!=null?Number(item.exceptionClosingDay):""}" style="margin-top:8px;" />
+        <select id="c_ex_day" class="input" style="margin-top:8px;">
+          <option value="">-</option>
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
+        </select>
       </div>
 
       <div>
@@ -2103,7 +2164,7 @@ function openCardModal(mode, item=null){
   if($("#c_payacc")) $("#c_payacc").value = (item?.paymentAccountId ?? "rakuten");
   if($("#c_payable")) $("#c_payable").value = (item?.payableAccountId ?? "rakuten_card_payable");
   if($("#c_ex_channel")) $("#c_ex_channel").value = (item?.exceptionChannel ?? (((item?.cardName||"").includes("楽天")) ? "楽天市場" : ""));
-  if($("#c_ex_day")) $("#c_ex_day").value = (item?.exceptionClosingDay ?? (((item?.cardName||"").includes("楽天")) ? 25 : ""));
+  if($("#c_ex_day")) $("#c_ex_day").value = String(item?.exceptionClosingDay ?? (((item?.cardName||"").includes("楽天")) ? 25 : ""));
 
 $("#c_save").addEventListener("click", async ()=>{
     const payload = {
