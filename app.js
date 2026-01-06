@@ -49,24 +49,9 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-// =========================
-// Credit card payable (支払予定) virtual account
-// =========================
-// 「クレカ利用＝支出計上」しつつ「銀行残高は引き落とし日まで減らさない」ための仮想口座。
-// 例）楽天カード利用 → 出金元を CC_PAYABLE_ACCOUNT_ID にする。
-//      引落日（27日）に 楽天銀行 → CC_PAYABLE_ACCOUNT_ID の資金移動を入れる。
-const CC_PAYABLE_ACCOUNT_ID = "rakuten_card_payable";
-const CC_PAYABLE_LINK_BANK_ID = "rakuten";
-
 function yen(n){
   const x = Number(n || 0);
   return x.toLocaleString("ja-JP");
-}
-
-function signedYen(n){
-  const x = Number(n || 0);
-  const sign = x < 0 ? "▲" : x > 0 ? "+" : "";
-  return `${sign}${yen(Math.abs(x))}`;
 }
 function monthKey(d=new Date()){
   const y = d.getFullYear();
@@ -173,10 +158,47 @@ function accountName(id){
   return hit?.name || id || "-";
 }
 
+function creditCardName(id){
+  const c = (state.creditCards||[]).find(x=>x.id===id);
+  return c?.cardName || id || "-";
+}
+function getCreditCardById(id){
+  return (state.creditCards||[]).find(x=>x.id===id) || null;
+}
+function computeNextCardPayment(){
+  // based on selected month (state.month: YYYY-MM)
+  const cards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
+  const entries = (state.entries||[]).filter(e=>e.type==="expense" && (e.paymentMethod==="クレカ") && e.creditCardId);
+  const byCard = [];
+  for(const c of cards){
+    const total = entries.filter(e=>e.creditCardId===c.id).reduce((s,x)=> s + Number(x.amount||0), 0);
+    if(total!==0){
+      byCard.push({cardId:c.id, cardName:c.cardName||c.id, amount: total});
+    }
+  }
+  const sum = byCard.reduce((s,x)=> s + x.amount, 0);
+  // next pay date: next month paymentDay (first card's paymentDay, or 27)
+  const [y,m] = (state.month||"").split("-").map(n=>Number(n));
+  let payDay = 27;
+  // if multiple cards, show earliest upcoming day? for now use minimum paymentDay among cards that have amount
+  const days = byCard.map(x=> Number(getCreditCardById(x.cardId)?.paymentDay||0)).filter(n=>n>0 && n<=31);
+  if(days.length) payDay = Math.min(...days);
+  let py=y, pm=m+1;
+  if(pm===13){ py+=1; pm=1; }
+  const last = new Date(py, pm, 0).getDate();
+  const d = Math.min(payDay, last);
+  const payDate = new Date(py, pm-1, d);
+  const dateStr = isNaN(payDate.getTime()) ? "-" : payDate.toLocaleDateString("ja-JP");
+  return { total: sum, dateStr, byCard };
+}
+
 function entryAccountLabel(e){
   if(!e) return "-";
   if(e.type==="income") return accountName(e.toAccountId||"-");
-  if(e.type==="expense") return accountName(e.fromAccountId||"-");
+  if(e.type==="expense"){
+    if(e.paymentMethod==="クレカ" && e.creditCardId) return creditCardName(e.creditCardId);
+    return accountName(e.fromAccountId||"-");
+  }
   if(e.type==="transfer"){
     const f = accountName(e.fromAccountId||"-");
     const t = accountName(e.toAccountId||"-");
@@ -273,16 +295,10 @@ function mount(){
 function renderHome(){
   const {income, expense, transfer, net} = sumsByType();
   const mb = mergedBalances();
-  const deltas = accountDeltasFromEntries();
   const accounts = getAllAccountsFromMaster();
   const nameOf = (id)=> (accounts.find(a=>a.id===id)?.name || id);
 
   const totalCash = mb.reduce((s,x)=> s + Number(x.balance||0), 0);
-  const totalCashEst = mb.reduce((s,x)=> s + (Number(x.balance||0) + Number(deltas.get(x.id)||0)), 0);
-  const totalCashEstNoNisa = mb
-    .filter(x=>x.id!=="nisa")
-    .reduce((s,x)=> s + (Number(x.balance||0) + Number(deltas.get(x.id)||0)), 0);
-  const payableEst = (mb.find(x=>x.id===CC_PAYABLE_ACCOUNT_ID)?.balance || 0) + Number(deltas.get(CC_PAYABLE_ACCOUNT_ID)||0);
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
@@ -303,6 +319,22 @@ function renderHome(){
         <div class="small">資金移動：¥${yen(transfer)}</div>
       </div>
     </div>
+    ${(()=>{
+      const np = computeNextCardPayment();
+      if(!np || !np.total) return "";
+      return `
+        <div class="grid cols3" style="margin-top:12px;">
+          <div class="card">
+            <div class="h2">次回クレカ支払予定</div>
+            <div class="kpi">¥${yen(np.total)}</div>
+            <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
+            ${np.byCard.length<=1 ? "" : `<div class="small" style="margin-top:6px;">内訳：${np.byCard.map(x=>`${escapeHtml(x.cardName)} ¥${yen(x.amount)}`).join(" / ")}</div>`}
+          </div>
+        </div>
+      `;
+    })()}
+
+
 
     <div class="grid cols2" style="margin-top:12px;">
       <div class="card">
@@ -310,26 +342,17 @@ function renderHome(){
           <h2 class="h1">口座合計（入力/差分反映後）</h2>
           <div class="spacer"></div>
           <span class="badge">合計 ¥${yen(totalCash)}</span>
-          <span class="badge">実質 ¥${yen(totalCashEstNoNisa)}</span>
         </div>
         <div class="sep"></div>
         <table class="table">
           <thead><tr><th>口座</th><th class="right">残高</th></tr></thead>
           <tbody>
-            ${mb
-              .filter(a=>a.id!==CC_PAYABLE_ACCOUNT_ID)
-              .map(a=>{
-                const isLinkBank = (a.id===CC_PAYABLE_LINK_BANK_ID);
-                return `
-                  <tr>
-                    <td>
-                      ${escapeHtml(nameOf(a.id))}${a.id==="sbi_net" ? "（目的別あり）":""}
-                      ${isLinkBank && payableEst!==0 ? `<div class="small muted" style="margin-top:2px;">支払予定 ${signedYen(payableEst)}円</div>` : ""}
-                    </td>
-                    <td class="right">¥${yen(a.balance)}</td>
-                  </tr>
-                `;
-              }).join("")}
+            ${mb.map(a=>`
+              <tr>
+                <td>${escapeHtml(nameOf(a.id))}${a.id==="sbi_net" ? "（目的別あり）":""}</td>
+                <td class="right">¥${yen(a.balance)}</td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
         <div class="small" style="margin-top:10px;">※表示は bundle（あれば）→ Firestore月末入力で上書き</div>
@@ -813,9 +836,6 @@ function renderAccounts(){
   const accounts = getAllAccountsFromMaster();
   const mb = mergedBalances();
   const deltas = accountDeltasFromEntries();
-  const payableBase = mb.find(x=>x.id===CC_PAYABLE_ACCOUNT_ID)?.balance || 0;
-  const payableDelta = Number(deltas.get(CC_PAYABLE_ACCOUNT_ID)||0);
-  const payableEst = Number(payableBase||0) + payableDelta;
   const sbi = mb.find(x=>x.id==="sbi_net");
   const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
 
@@ -840,16 +860,12 @@ function renderAccounts(){
             </tr>
           </thead>
           <tbody>
-            ${mb.filter(x=>x.id!=="nisa" && x.id!==CC_PAYABLE_ACCOUNT_ID).map(a=>{
+            ${mb.filter(x=>x.id!=="nisa").map(a=>{
               const d = Number(deltas.get(a.id)||0);
               const est = Number(a.balance||0) + d;
-              const isLinkBank = (a.id===CC_PAYABLE_LINK_BANK_ID);
               return `
                 <tr>
-                  <td>
-                    ${escapeHtml(accountName(a.id))}
-                    ${isLinkBank && payableEst!==0 ? `<div class="small muted" style="margin-top:2px;">支払予定 ${signedYen(payableEst)}円</div>` : ""}
-                  </td>
+                  <td>${escapeHtml(accountName(a.id))}</td>
                   <td class="right">¥${yen(a.balance)}</td>
                   <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
                   <td class="right"><b>¥${yen(est)}</b></td>
@@ -1610,11 +1626,29 @@ function openEntryModal(mode, entry=null){
       `;
     }
     if(type==="expense"){
+      const payMethods = (state.master.paymentMethods||["現金","振込","口座引落","クレカ"]);
+      const paySel = entry?.paymentMethod || payMethods[0] || "現金";
       const sel = entry?.fromAccountId || accounts[0]?.id || "";
+      const cardSel = entry?.creditCardId || (state.creditCards?.[0]?.id||"");
+      const cardOpts = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped")
+        .map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===cardSel?"selected":""}>${escapeHtml(c.cardName||c.id)}</option>`).join("");
       return `
         <div>
+          <div class="small">支払い方法</div>
+          <select id="m_payMethod" class="input">
+            ${payMethods.map(p=>`<option ${p===paySel?"selected":""}>${escapeHtml(p)}</option>`).join("")}
+          </select>
+        </div>
+
+        <div id="m_fromWrap">
           <div class="small">出金元銀行</div>
           <select id="m_fromAccount" class="input">${opts(sel)}</select>
+        </div>
+
+        <div id="m_cardWrap" style="display:none;">
+          <div class="small">クレカ</div>
+          <select id="m_card" class="input">${cardOpts}</select>
+          <div class="small" style="margin-top:6px;">※クレカ利用分は「支払予定」に積み上げ、引落日に口座から減ります。</div>
         </div>
       `;
     }
@@ -1650,7 +1684,32 @@ function openEntryModal(mode, entry=null){
         <div class="small">日付</div>
         <input id="m_date" class="input" type="date" value="${dateStr}" />
       </div>
+      
       <div>
+        <div class="small">締め日</div>
+        <select id="c_close" class="input">
+          <option value="EOM">末日</option>
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">支払日</div>
+        <input id="c_payday" class="input" type="number" inputmode="numeric" min="1" max="31" value="${Number(item?.paymentDay||27)}" />
+      </div>
+      <div>
+        <div class="small">支払口座</div>
+        <select id="c_payacc" class="input">
+          ${(state.master.banks||[]).filter(x=>x.active!==false).map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">支払予定口座</div>
+        <select id="c_payable" class="input">
+          ${(state.master.otherAccounts||[]).filter(x=>x.active!==false).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join("")}
+        </select>
+      </div>
+
+<div>
         <div class="small">メモ</div>
         <input id="m_note" class="input" value="${escapeHtml(entry?.note||"")}" />
       </div>
@@ -1662,7 +1721,19 @@ function openEntryModal(mode, entry=null){
     </div>
   `);
 
-  $("#m_save").addEventListener("click", async ()=>{
+  
+  // expense: toggle payment UI
+  const syncPayUi = ()=>{
+    if(type!=="expense") return;
+    const pm = $("#m_payMethod") ? $("#m_payMethod").value : "";
+    const isCard = (pm==="クレカ");
+    if($("#m_cardWrap")) $("#m_cardWrap").style.display = isCard ? "" : "none";
+    if($("#m_fromWrap")) $("#m_fromWrap").style.display = isCard ? "none" : "";
+  };
+  if($("#m_payMethod")) $("#m_payMethod").addEventListener("change", syncPayUi);
+  syncPayUi();
+
+$("#m_save").addEventListener("click", async ()=>{
     const category = $("#m_category").value;
     const amount = Number($("#m_amount").value||0);
     const date = $("#m_date").value;
@@ -1671,10 +1742,23 @@ function openEntryModal(mode, entry=null){
 
     const fromAccountId = $("#m_fromAccount") ? $("#m_fromAccount").value : null;
     const toAccountId = $("#m_toAccount") ? $("#m_toAccount").value : null;
+    const paymentMethod = $("#m_payMethod") ? $("#m_payMethod").value : null;
+    const creditCardId = $("#m_card") ? $("#m_card").value : null;
+
+    // expense: when クレカ, post to payable (支払予定) account instead of bank
+    let effectiveFrom = fromAccountId;
+    let effectiveCardId = null;
+    if(type==="expense" && paymentMethod==="クレカ"){
+      effectiveCardId = creditCardId || null;
+      const card = effectiveCardId ? getCreditCardById(effectiveCardId) : null;
+      effectiveFrom = (card?.payableAccountId) || "rakuten_card_payable";
+    }
 
     const payload = {
       type, category, amount, note, occurredAt,
-      fromAccountId: fromAccountId || null,
+      paymentMethod: paymentMethod || null,
+      creditCardId: effectiveCardId,
+      fromAccountId: effectiveFrom || null,
       toAccountId: toAccountId || null,
       updatedAt: Date.now()
     };
@@ -1845,15 +1929,27 @@ function openCardModal(mode, item=null){
     </div>
   `);
 
-  $("#c_save").addEventListener("click", async ()=>{
+  
+  // prefill
+  if($("#c_close")) $("#c_close").value = (item?.closingDay ?? "EOM");
+  if($("#c_payacc")) $("#c_payacc").value = (item?.paymentAccountId ?? "rakuten");
+  if($("#c_payable")) $("#c_payable").value = (item?.payableAccountId ?? "rakuten_card_payable");
+
+$("#c_save").addEventListener("click", async ()=>{
     const payload = {
       cardName: $("#c_name").value || "",
       issuer: $("#c_issuer").value || "",
       last4: $("#c_last4").value || "",
       expiryDate: $("#c_exp").value || "",
+
+      closingDay: $("#c_close") ? $("#c_close").value : "EOM",
+      paymentDay: Number($("#c_payday") ? $("#c_payday").value : 0) || 27,
+      paymentAccountId: $("#c_payacc") ? $("#c_payacc").value : "rakuten",
+      payableAccountId: $("#c_payable") ? $("#c_payable").value : "rakuten_card_payable",
+
       status: $("#c_status").value || "active",
       memo: $("#c_memo").value || "",
-      active: ( $("#c_status").value || "active" ) === "active",
+      active: ( ($("#c_status").value || "active") === "active" ),
       updatedAt: Date.now(),
     };
     if(mode==="add"){
