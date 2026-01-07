@@ -52,6 +52,8 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+const isSmallScreen = ()=> (window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+
 function yen(n){
   const x = Number(n || 0);
   return x.toLocaleString("ja-JP");
@@ -632,8 +634,10 @@ function setActiveTab(route){
 
 function mount(){
   const view = $("#appView");
-  // route marker for per-route CSS (esp. iPhone-only tweaks)
-  view.dataset.route = state.route || "home";
+  if(view) view.dataset.route = state.route || "";
+  if(view) view.dataset.route = state.route || "";
+  if(view) view.dataset.route = state.route || "";
+  if(view) view.dataset.route = state.route || "";
   if(state.route==="home") view.innerHTML = renderHome();
   else if(state.route==="money") view.innerHTML = renderMoney();
   else if(state.route==="insurance") view.innerHTML = renderInsurance();
@@ -643,6 +647,10 @@ function mount(){
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
   else view.innerHTML = renderHome();
+
+  // for responsive / route-specific CSS (e.g. iPhone home compact view)
+  view.dataset.route = state.route || "home";
+
   wireViewEvents();
 }
 
@@ -679,7 +687,7 @@ function renderHome(){
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
-	    <div class="card home-soon" style="margin-bottom:12px;">
+	    <div class="card" style="margin-bottom:12px;">
 	      <div class="row">
 	        <h2 class="h1">90日以内の期限</h2>
 	        <div class="spacer"></div>
@@ -688,7 +696,7 @@ function renderHome(){
 	      </div>
 	      <div class="sep"></div>
 	      ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
-	        <table class="table">
+	        <table class="table homeSoon">
 	          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
 	          <tbody>
 	            ${soon.slice(0,8).map(e=>`
@@ -726,7 +734,7 @@ function renderHome(){
       if(!np || !np.total) return "";
       return `
         <div class="grid cols3" style="margin-top:12px;">
-          <div class="card home-cc-next">
+          <div class="card">
             <div class="h2">次回クレカ支払予定</div>
             <div class="kpi">¥${yen(np.total)}</div>
             <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
@@ -738,12 +746,12 @@ function renderHome(){
 
 
 
-    <div class="card home-total" style="margin-top:12px;">
+    <div class="card" style="margin-top:12px;">
       <div class="row">
         <h2 class="h1">口座合計（入力/差分反映後）</h2>
         <div class="spacer"></div>
         <span class="badge">銀行・現金 ¥${yen(totalBankEst)}</span>
-        <span class="badge home-cc-badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
+        <span class="badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
         <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
       </div>
       <div class="small" style="margin-top:10px;opacity:.8;">
@@ -752,14 +760,14 @@ function renderHome(){
     </div>
 
     <div class="grid cols2" style="margin-top:12px;">
-      <div class="card home-bank">
+      <div class="card">
         <div class="row">
           <h2 class="h1">銀行口座・現金</h2>
           <div class="spacer"></div>
           <span class="badge">合計 ¥${yen(totalBankEst)}</span>
         </div>
         <div class="sep"></div>
-        <table class="table">
+	        <table class="table homeBank">
           <thead><tr><th>口座</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${bankRows.map(r=>`
@@ -772,14 +780,14 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card home-cc">
+      <div class="card">
         <div class="row">
           <h2 class="h1">クレカ支払予定</h2>
           <div class="spacer"></div>
           <span class="badge">合計 ¥${yen(totalCardOutstanding)}</span>
         </div>
         <div class="sep"></div>
-        <table class="table">
+	        <table class="table homeCardPay">
           <thead><tr><th>カード</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${payableRows.map(r=>`
@@ -1240,6 +1248,50 @@ function renderMoneyEntries(){
   ];
   const active = state._moneyTab || "income";
   const eList = state.entries.filter(e=> e.type===active);
+  const small = isSmallScreen();
+
+  const historyHtml = small ? `
+    <div class="histList">
+      ${eList.length===0 ? `<div class="small">まだありません。</div>` : eList.map(e=>`
+        <button class="histItem" type="button" data-entrydetail="${e.id}">
+          <div class="histLeft">
+            <div class="histDate">${new Date(Number(e.occurredAt||0)).toLocaleDateString("ja-JP")}</div>
+            <div class="histCat">${escapeHtml(e.category||"")}</div>
+          </div>
+          <div class="histAmt">¥${yen(e.amount)}</div>
+        </button>
+      `).join("")}
+    </div>
+  ` : `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>日付</th>
+          <th>カテゴリ</th>
+          <th>口座</th>
+          <th class="right">金額</th>
+          <th>メモ</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${eList.length===0 ? `<tr><td colspan="6" class="small">まだありません。</td></tr>` : eList.map(e=>`
+          <tr>
+            <td>${new Date(Number(e.occurredAt||0)).toLocaleDateString("ja-JP")}</td>
+            <td>${escapeHtml(e.category||"")}</td>
+            <td>${escapeHtml(entryAccountLabel(e))}</td>
+            <td class="right">¥${yen(e.amount)}</td>
+            <td>${escapeHtml(e.note||"")}</td>
+            <td class="right">
+              <button class="btn secondary" data-edit-entry="${e.id}">編集</button>
+              <button class="btn danger" data-del-entry="${e.id}">削除</button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
   return `
     <div class="card">
       <div class="row">
@@ -1252,46 +1304,23 @@ function renderMoneyEntries(){
 
       <div class="tabs">
         ${tabs.map(t=>`<button class="tab ${t.key===active?"active":""}" data-moneytab="${t.key}">${t.label}</button>`).join("")}
-
       </div>
 
-      ${""}
-
-
-
-      <div class="sep"></div>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>日付</th>
-            <th>カテゴリ</th>
-            <th>口座</th>
-            <th class="right">金額</th>
-            <th>メモ</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${eList.length===0 ? `<tr><td colspan="6" class="small">まだありません。</td></tr>` : eList.map(e=>`
-            <tr>
-              <td>${new Date(Number(e.occurredAt||0)).toLocaleDateString("ja-JP")}</td>
-              <td>${escapeHtml(e.category||"")}</td>
-              <td>${escapeHtml(entryAccountLabel(e))}</td>
-              <td class="right">¥${yen(e.amount)}</td>
-              <td>${escapeHtml(e.note||"")}</td>
-              <td class="right">
-                <button class="btn secondary" data-edit-entry="${e.id}">編集</button>
-                <button class="btn danger" data-del-entry="${e.id}">削除</button>
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
       <div class="sep"></div>
       <div class="small">
         ・入金：入金先 / 出金：出金元 / 資金移動：出金元→出金先 / チャージ：チャージ元→プリペイド を保存します。<br/>
         ・口座管理では、月末残高（手入力）＋ 今月の入出金/移動の差分で「推定残高」を表示します。
       </div>
+    </div>
+
+    <div class="card historyCard" style="margin-top:12px;">
+      <div class="row">
+        <h2 class="h1">履歴</h2>
+        <div class="spacer"></div>
+        <span class="badge">${eList.length}件</span>
+      </div>
+      <div class="sep"></div>
+      ${historyHtml}
     </div>
   `;
 }
@@ -1908,6 +1937,17 @@ function wireViewEvents(){
     });
   });
 
+// entry detail (iPhone compact history)
+$$("[data-entrydetail]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const id = btn.dataset.entrydetail;
+    const e = state.entries.find(x=>x.id===id);
+    openEntryDetailModal(e);
+  });
+});
+
+
+
   // balances
   const btnEditBalances = $("#btnEditBalances");
   if(btnEditBalances){
@@ -2466,6 +2506,53 @@ $("#m_save").addEventListener("click", async ()=>{
     hideModal();
     await reloadAll();
   }, { once:true });
+}
+
+function openEntryDetailModal(entry){
+  if(!entry){ return; }
+  const typeLabel = ({income:"入金", expense:"出金", transfer:"資金移動", charge:"チャージ"}[entry.type] || (entry.type||""));
+  const rows = [
+    {label:"日付", value: new Date(Number(entry.occurredAt||0)).toLocaleDateString("ja-JP")},
+    {label:"種別", value: typeLabel},
+    {label:"カテゴリ", value: entry.category || "-"},
+    {label:"口座", value: entryAccountLabel(entry) || "-"},
+    {label:"金額", value: `¥${yen(entry.amount)}`},
+    {label:"メモ", value: entry.note || "-"},
+  ];
+  const html = `
+    <div class="detailList">
+      ${rows.map(r=>`
+        <div class="detailRow">
+          <div class="detailLabel">${escapeHtml(r.label)}</div>
+          <div class="detailValue">${escapeHtml(String(r.value))}</div>
+        </div>
+      `).join("")}
+      <div class="sep"></div>
+      <div class="row" style="justify-content:flex-end; gap:10px;">
+        <button class="btn secondary" id="btnDetailEdit">編集</button>
+        <button class="btn danger" id="btnDetailDel">削除</button>
+      </div>
+    </div>
+  `;
+  showModal("履歴（詳細）", html);
+
+  const btnE = $("#btnDetailEdit");
+  if(btnE){
+    btnE.addEventListener("click", ()=>{
+      hideModal();
+      openEntryModal("edit", entry);
+    });
+  }
+  const btnD = $("#btnDetailDel");
+  if(btnD){
+    btnD.addEventListener("click", async ()=>{
+      if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+      if(!confirm("削除しますか？")) return;
+      await deleteDoc(doc(db, "months", state.month, "entries", entry.id));
+      hideModal();
+      await reloadAll();
+    });
+  }
 }
 
 function openBalancesModal(){
