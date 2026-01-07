@@ -116,6 +116,10 @@ async function loadMonthData(month){
   const s3 = await getDocs(collection(db, "fixedCosts"));
   state.fixedCosts = s3.docs.map(d=>({id:d.id, ...d.data()}));
 
+  // Auto-post fixed costs due in this month (idempotent). Requires editor/admin.
+  await ensureFixedCostPosts(month);
+
+
   const s4 = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
   state.events = s4.docs.map(d=>({id:d.id, ...d.data()}));
   // family / others (for event suggestions)
@@ -158,6 +162,82 @@ async function loadMonthData(month){
   }
 
 }
+async function ensureFixedCostPosts(month){
+  try{
+    if(state.role==="viewer") return;
+    const fixed = state.fixedCosts || [];
+    if(!fixed.length) return;
+
+    const monthStart = new Date(`${month}-01T00:00:00+09:00`).getTime();
+    const [yy,mm] = month.split("-").map(n=>Number(n));
+    const monthEnd = new Date(yy, mm, 0, 23,59,59,999).getTime(); // end of month
+
+    const existing = (state.entries||[]).filter(e=>e.meta && e.meta.fixedCostId);
+
+    for(const fc of fixed){
+      const cycleType = fc.cycleType || (fc.cycleText ? (fc.cycleText.includes("年") ? "yearly" : (fc.cycleText.includes("4") ? "quarterly" : "monthly")) : "monthly");
+      const payDay = Number(fc.payDay||0) || null;
+      const payMonth = Number(fc.payMonth||0) || null;
+
+      // determine nextPayDate
+      let nextMs = fc.nextPayDate || null;
+      if(!nextMs){
+        nextMs = nextFixedCostDateFromSettings(cycleType, payDay, payMonth, Date.now());
+        // persist the computed schedule base
+        await updateDoc(doc(db, "fixedCosts", fc.id), { cycleType, payDay, payMonth, nextPayDate: nextMs, updatedAt: Date.now() });
+        fc.nextPayDate = nextMs;
+        fc.cycleType = cycleType; fc.payDay = payDay; fc.payMonth = payMonth;
+      }
+
+      // keep generating posts while due within this month
+      let safety=0;
+      while(nextMs>=monthStart && nextMs<=monthEnd && safety<24){
+        const key = `${fc.id}_${nextMs}`;
+        const already = existing.some(e=> (e.meta?.fixedCostId===fc.id) && (e.meta?.fixedCostAt===nextMs));
+        if(!already){
+          const paymentMethod = fc.paymentMethod || "現金";
+          const creditCardId = (paymentMethod==="クレカ") ? (fc.creditCardId||null) : null;
+          const fromAccountId = (paymentMethod==="クレカ")
+            ? (creditCardId ? payableAccountIdForCardId(creditCardId) : null)
+            : (fc.payAccountId || null);
+
+          const payload = {
+            type: "expense",
+            category: fc.category || "固定費",
+            amount: Number(fc.amount||0),
+            note: fc.memo || "",
+            occurredAt: nextMs,
+            paymentMethod,
+            creditCardId,
+            creditChannel: null,
+            fromAccountId,
+            toAccountId: null,
+            meta: {
+              fixedCostId: fc.id,
+              fixedCostAt: nextMs,
+              fixedCostName: fc.name || ""
+            },
+            createdAt: Date.now(),
+            createdBy: state.user.uid,
+            updatedAt: Date.now()
+          };
+          await addDoc(collection(db, "months", month, "entries"), payload);
+          // keep local state in sync (so UI immediately reflects)
+          state.entries.push({ id: "__tmp__"+Math.random().toString(36).slice(2), ...payload });
+          existing.push(payload);
+        }
+
+        // advance schedule and persist
+        nextMs = advanceFixedCostDate(nextMs, cycleType, payDay, payMonth);
+        safety++;
+        await updateDoc(doc(db, "fixedCosts", fc.id), { nextPayDate: nextMs, cycleType, payDay, payMonth, updatedAt: Date.now() });
+      }
+    }
+  }catch(e){
+    console.warn("[fixedCosts] auto post skipped:", e?.message||e);
+  }
+}
+
 
 /** =========================
  *  5) Merge logic (bundle + diff)
@@ -206,6 +286,69 @@ function addMonthsKey(key, delta){
   return ymKey(y,m);
 }
 function lastDayOf(y,m){ return new Date(y, m, 0).getDate(); } // m=1..12
+
+function clampDay(y,m,day){
+  const ld = lastDayOf(y,m);
+  return Math.min(Math.max(Number(day||1),1), ld);
+}
+function nextFixedCostDateFromSettings(cycleType, payDay, payMonth, baseMs){
+  // baseMs: starting point (usually Date.now())
+  const base = new Date(baseMs||Date.now());
+  const y = base.getFullYear(), m = base.getMonth()+1;
+  const d = Number(payDay||base.getDate()||1);
+
+  if(cycleType==="yearly"){
+    const mm = Number(payMonth||m);
+    let yy = y;
+    let dd = clampDay(yy, mm, d);
+    let cand = new Date(yy, mm-1, dd, 0,0,0,0).getTime();
+    if(cand < new Date(y, m-1, base.getDate(),0,0,0,0).getTime()){
+      yy += 1;
+      dd = clampDay(yy, mm, d);
+      cand = new Date(yy, mm-1, dd, 0,0,0,0).getTime();
+    }
+    return cand;
+  }
+
+  const step = (cycleType==="quarterly") ? 3 : 1; // monthly default
+  // try current month
+  let yy = y, mm = m;
+  let dd = clampDay(yy, mm, d);
+  let cand = new Date(yy, mm-1, dd, 0,0,0,0).getTime();
+  const today0 = new Date(y, m-1, base.getDate(),0,0,0,0).getTime();
+  if(cand < today0){
+    // move to next cycle month
+    let key = addMonthsKey(ymKey(y,m), step);
+    const [y2,m2] = key.split("-").map(n=>Number(n));
+    yy=y2; mm=m2;
+    dd = clampDay(yy, mm, d);
+    cand = new Date(yy, mm-1, dd, 0,0,0,0).getTime();
+  }
+  return cand;
+}
+function advanceFixedCostDate(prevMs, cycleType, payDay, payMonth){
+  const prev = new Date(prevMs);
+  const y = prev.getFullYear(), m = prev.getMonth()+1;
+  const d = Number(payDay||prev.getDate()||1);
+  if(cycleType==="yearly"){
+    const mm = Number(payMonth||m);
+    const yy = y + 1;
+    const dd = clampDay(yy, mm, d);
+    return new Date(yy, mm-1, dd, 0,0,0,0).getTime();
+  }
+  const step = (cycleType==="quarterly") ? 3 : 1;
+  const key = addMonthsKey(ymKey(y,m), step);
+  const [y2,m2] = key.split("-").map(n=>Number(n));
+  const dd = clampDay(y2, m2, d);
+  return new Date(y2, m2-1, dd, 0,0,0,0).getTime();
+}
+function ymd(ms){
+  const d = new Date(ms);
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const dd=String(d.getDate()).padStart(2,"0");
+  return `${y}/${m}/${dd}`;
+}
 function paymentDateMsForMonth(card, payMonthKey){
   const [y,m]=payMonthKey.split("-").map(n=>Number(n));
   const pd = Number(card?.paymentDay||27) || 27;
@@ -2079,13 +2222,41 @@ function openFixedModal(mode, item=null){
         <div class="small">金額（今は手入力）</div>
         <input id="f_amount" class="input" type="number" value="${Number(item?.amount||0)}" />
       </div>
-      <div>
-        <div class="small">支払周期（自由記入）</div>
-        <input id="f_cycle" class="input" value="${escapeHtml(item?.cycleText||"毎月")}" />
+      <div id="f_payAccountWrap">
+        <div class="small">支払口座</div>
+        <select id="f_payAccount" class="input">
+          ${getAllAccountsFromMaster().filter(a=>!a.system).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div id="f_cardWrap">
+        <div class="small">支払カード（クレカ時）</div>
+        <select id="f_creditCard" class="input">
+          ${(state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped").map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.cardName||c.name||c.id)}</option>`).join("")}
+        </select>
       </div>
       <div>
-        <div class="small">次回支払日</div>
-        <input id="f_next" class="input" type="date" value="${item?.nextPayDate ? new Date(Number(item.nextPayDate)).toISOString().slice(0,10) : ""}" />
+        <div class="small">支払周期</div>
+        <select id="f_cycleType" class="input">
+          <option value="monthly">月1</option>
+          <option value="quarterly">年4</option>
+          <option value="yearly">年1</option>
+        </select>
+      </div>
+      <div>
+        <div class="small">支払日</div>
+        <select id="f_payDay" class="input">
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}</option>`).join("")}
+        </select>
+      </div>
+      <div id="f_payMonthWrap">
+        <div class="small">支払月（年1のみ）</div>
+        <select id="f_payMonth" class="input">
+          ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="small">次回支払日（自動）</div>
+        <input id="f_next" class="input" type="date" readonly />
       </div>
       <div>
         <div class="small">表示</div>
@@ -2104,14 +2275,71 @@ function openFixedModal(mode, item=null){
     </div>
   `);
 
+  // init fixed-cost controls (select-based)
+  const inferCycle = ()=>{
+    if(item?.cycleType) return item.cycleType;
+    const t = (item?.cycleText||"").trim();
+    if(t.includes("年4")) return "quarterly";
+    if(t.includes("年1") || t.includes("年")) return "yearly";
+    return "monthly";
+  };
+  const setSelect = (id, val)=>{
+    const el = $(id); if(!el) return;
+    const v = (val==null) ? "" : String(val);
+    const opt = [...el.options].some(o=>o.value===v);
+    if(opt) el.value = v;
+  };
+
+  setSelect("#f_cycleType", inferCycle());
+  setSelect("#f_payDay", item?.payDay || (item?.nextPayDate ? (new Date(item.nextPayDate).getDate()) : 27));
+  setSelect("#f_payMonth", item?.payMonth || (item?.nextPayDate ? (new Date(item.nextPayDate).getMonth()+1) : (new Date().getMonth()+1)));
+  setSelect("#f_payAccount", item?.payAccountId || "");
+  setSelect("#f_creditCard", item?.creditCardId || "");
+
+  const syncPayWrap = ()=>{
+    const pm = $("#f_pay").value || "";
+    const isCard = (pm==="クレカ");
+    if($("#f_cardWrap")) $("#f_cardWrap").style.display = isCard ? "" : "none";
+    if($("#f_payAccountWrap")) $("#f_payAccountWrap").style.display = isCard ? "none" : "";
+  };
+  const syncCycleWrap = ()=>{
+    const ct = $("#f_cycleType").value;
+    if($("#f_payMonthWrap")) $("#f_payMonthWrap").style.display = (ct==="yearly") ? "" : "none";
+  };
+
+  const recalcNext = ()=>{
+    const ct = $("#f_cycleType").value;
+    const day = Number($("#f_payDay").value||0) || 1;
+    const mo = Number($("#f_payMonth").value||0) || null;
+    const base = Date.now();
+    const ms = nextFixedCostDateFromSettings(ct, day, mo, base);
+    const iso = new Date(ms).toISOString().slice(0,10);
+    $("#f_next").value = iso;
+    $("#f_next").dataset.ms = String(ms);
+  };
+
+  $("#f_pay").addEventListener("change", ()=>{ syncPayWrap(); recalcNext(); });
+  $("#f_cycleType").addEventListener("change", ()=>{ syncCycleWrap(); recalcNext(); });
+  $("#f_payDay").addEventListener("change", recalcNext);
+  $("#f_payMonth").addEventListener("change", recalcNext);
+
+  syncPayWrap();
+  syncCycleWrap();
+  recalcNext();
+
+
   $("#f_save").addEventListener("click", async ()=>{
     const payload = {
       name: $("#f_name").value || "",
       category: $("#f_cat").value || "",
       paymentMethod: $("#f_pay").value || "",
       amount: Number($("#f_amount").value||0),
-      cycleText: $("#f_cycle").value || "",
-      nextPayDate: $("#f_next").value ? new Date(`${$("#f_next").value}T00:00:00+09:00`).getTime() : null,
+      cycleType: $("#f_cycleType").value || "monthly",
+      payDay: Number($("#f_payDay").value||0) || null,
+      payMonth: ($("#f_cycleType").value==="yearly") ? (Number($("#f_payMonth").value||0) || null) : null,
+      payAccountId: ($("#f_pay").value==="クレカ") ? null : ($("#f_payAccount").value || null),
+      creditCardId: ($("#f_pay").value==="クレカ") ? ($("#f_creditCard").value || null) : null,
+      nextPayDate: $("#f_next").dataset.ms ? Number($("#f_next").dataset.ms) : null,
       visible: $("#f_visible").value === "true",
       memo: $("#f_memo").value || "",
       updatedAt: Date.now()
