@@ -344,30 +344,41 @@ function advanceFixedCostDate(prevMs, cycleType, payDay, payMonth){
 }
 function ymd(ms){
   const d = new Date(ms);
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,"0");
-  const dd=String(d.getDate()).padStart(2,"0");
-  return `${y}/
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${y}/${m}/${dd}`;
+}
+
 function parseDateLikeToMs(v){
-  // Accept: ms(number), ISO string, "YYYY/MM/DD", "YYYY-MM-DD"
+  // Accept: ms(number), Firestore Timestamp-like, Date, ISO string, "YYYY/MM/DD", "YYYY-MM-DD"
   if(v==null) return null;
-  if(typeof v==="number" && isFinite(v)) return v;
-  if(typeof v==="string"){
-    const s=v.trim();
-    if(!s) return null;
-    // YYYY/MM/DD or YYYY-MM-DD
-    let m=s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-    if(m){
-      const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
-      if(y&&mo&&d) return new Date(y, mo-1, d, 0,0,0,0).getTime();
+
+  // Firestore Timestamp {seconds, nanoseconds} or Date
+  if(typeof v==="object"){
+    if(v instanceof Date) return v.getTime();
+    if(("seconds" in v) && typeof v.seconds==="number"){
+      const ns = ("nanoseconds" in v && typeof v.nanoseconds==="number") ? v.nanoseconds : 0;
+      return v.seconds*1000 + Math.floor(ns/1e6);
     }
-    const t=Date.parse(s);
+  }
+
+  if(typeof v==="number" && isFinite(v)) return v;
+
+  if(typeof v==="string"){
+    const s = v.trim();
+    if(!s) return null;
+    const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if(m){
+      const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+      if(y && mo && d) return new Date(y, mo-1, d, 0,0,0,0).getTime();
+    }
+    const t = Date.parse(s);
     if(!Number.isNaN(t)) return t;
   }
   return null;
 }
-${m}/${dd}`;
-}
+
 function paymentDateMsForMonth(card, payMonthKey){
   const [y,m]=payMonthKey.split("-").map(n=>Number(n));
   const pd = Number(card?.paymentDay||27) || 27;
