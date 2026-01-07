@@ -609,8 +609,6 @@ function renderHome(){
   const totalBankEst = bankRows.reduce((s,r)=> s + r.estBal, 0);
   const totalCardOutstanding = payableRows.reduce((s,r)=> s + (r.estBal<0 ? -r.estBal : 0), 0);
   const totalNetEst = totalBankEst - totalCardOutstanding;
-
-  const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
