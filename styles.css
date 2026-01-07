@@ -355,120 +355,45 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   cursor:pointer;
 }
 
-/* =========================
-   iPhone: Money > Entries > History list visuals (dark + no blue link/button)
-   ========================= */
-@media (max-width: 480px) and (hover: none) and (pointer: coarse){
-  /* kill iOS default blue */
-  #appView[data-route="money"] a,
-  #appView[data-route="money"] a:visited,
-  #appView[data-route="money"] a:hover,
-  #appView[data-route="money"] a:active{
-    color: var(--text) !important;
-    text-decoration: none !important;
-  }
-
-  /* history list items are rendered as tappable elements on iPhone.
-     If they are plain <button> without .btn, they get iOS light gray + blue text.
-     Force them to match our card tone. */
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn){
-    -webkit-appearance: none;
-    appearance: none;
-    background: var(--card2) !important;
-    color: var(--text) !important;
-    border: 1px solid var(--line) !important;
-    border-radius: 16px !important;
-    padding: 14px 14px !important;
-    width: 100% !important;
-    text-align: left !important;
-    box-shadow: none !important;
-  }
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn) *{
-    color: var(--text) !important;
-  }
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn):active{
-    background: rgba(255,255,255,.075) !important;
-  }
-
-  /* if list items are <div> / <a> etc with light backgrounds, unify */
-  #appView[data-route="money"] .card .historyItem,
-  #appView[data-route="money"] .card .historyRow,
-  #appView[data-route="money"] .card .histItem,
-  #appView[data-route="money"] .card .txItem{
-    background: var(--card2) !important;
-    border: 1px solid var(--line) !important;
-    color: var(--text) !important;
-  }
-  #appView[data-route="money"] .card .historyItem *,
-  #appView[data-route="money"] .card .historyRow *,
-  #appView[data-route="money"] .card .histItem *,
-  #appView[data-route="money"] .card .txItem *{
-    color: var(--text) !important;
-  }
-
-  /* ensure history mini cards don't inherit light background from generic .pill or inputs */
-  #appView[data-route="money"] .card input,
-  #appView[data-route="money"] .card select,
-  #appView[data-route="money"] .card textarea{
-    color: var(--text);
-  }
-}
 
 /* =========================
-   iPhone: Money > Entries > History list visuals (dark + no blue link/button)
+   iPhone only: HOME tweaks
+   - hide credit card schedule cards
+   - show only Date+Title in 90days table
    ========================= */
-@media (max-width: 480px) and (hover: none) and (pointer: coarse){
-  /* kill iOS default blue */
-  #appView[data-route="money"] a,
-  #appView[data-route="money"] a:visited,
-  #appView[data-route="money"] a:hover,
-  #appView[data-route="money"] a:active{
-    color: var(--text) !important;
-    text-decoration: none !important;
+@media (max-width: 640px){
+  /* HOME: kill any horizontal scroll inside cards */
+  [data-home]{
+    overflow-x: hidden !important;
   }
-
-  /* history list items are rendered as tappable elements on iPhone.
-     If they are plain <button> without .btn, they get iOS light gray + blue text.
-     Force them to match our card tone. */
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn){
-    -webkit-appearance: none;
-    appearance: none;
-    background: var(--card2) !important;
-    color: var(--text) !important;
-    border: 1px solid var(--line) !important;
-    border-radius: 16px !important;
-    padding: 14px 14px !important;
+  [data-home] .table{
     width: 100% !important;
-    text-align: left !important;
-    box-shadow: none !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
   }
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn) *{
-    color: var(--text) !important;
-  }
-  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn):active{
-    background: rgba(255,255,255,.075) !important;
+  [data-home] .table th,
+  [data-home] .table td{
+    word-break: break-word;
   }
 
-  /* if list items are <div> / <a> etc with light backgrounds, unify */
-  #appView[data-route="money"] .card .historyItem,
-  #appView[data-route="money"] .card .historyRow,
-  #appView[data-route="money"] .card .histItem,
-  #appView[data-route="money"] .card .txItem{
-    background: var(--card2) !important;
-    border: 1px solid var(--line) !important;
-    color: var(--text) !important;
+  /* 90days: hide 3rd column (種別) */
+  [data-home="soon"] .table th:nth-child(3),
+  [data-home="soon"] .table td:nth-child(3){
+    display:none !important;
   }
-  #appView[data-route="money"] .card .historyItem *,
-  #appView[data-route="money"] .card .historyRow *,
-  #appView[data-route="money"] .card .histItem *,
-  #appView[data-route="money"] .card .txItem *{
-    color: var(--text) !important;
+  /* 90days: give more room to title */
+  [data-home="soon"] .table th:nth-child(1),
+  [data-home="soon"] .table td:nth-child(1){
+    width: 34% !important;
+  }
+  [data-home="soon"] .table th:nth-child(2),
+  [data-home="soon"] .table td:nth-child(2){
+    width: 66% !important;
   }
 
-  /* ensure history mini cards don't inherit light background from generic .pill or inputs */
-  #appView[data-route="money"] .card input,
-  #appView[data-route="money"] .card select,
-  #appView[data-route="money"] .card textarea{
-    color: var(--text);
+  /* HOME: hide credit card schedule cards (次回クレカ支払予定 / クレカ支払予定) */
+  [data-home="nextCardPay"],
+  [data-home="cardPayList"]{
+    display:none !important;
   }
 }
