@@ -354,3 +354,121 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   padding:6px 10px;
   cursor:pointer;
 }
+
+/* =========================
+   iPhone: Money > Entries > History list visuals (dark + no blue link/button)
+   ========================= */
+@media (max-width: 480px) and (hover: none) and (pointer: coarse){
+  /* kill iOS default blue */
+  #appView[data-route="money"] a,
+  #appView[data-route="money"] a:visited,
+  #appView[data-route="money"] a:hover,
+  #appView[data-route="money"] a:active{
+    color: var(--text) !important;
+    text-decoration: none !important;
+  }
+
+  /* history list items are rendered as tappable elements on iPhone.
+     If they are plain <button> without .btn, they get iOS light gray + blue text.
+     Force them to match our card tone. */
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn){
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--card2) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 16px !important;
+    padding: 14px 14px !important;
+    width: 100% !important;
+    text-align: left !important;
+    box-shadow: none !important;
+  }
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn) *{
+    color: var(--text) !important;
+  }
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn):active{
+    background: rgba(255,255,255,.075) !important;
+  }
+
+  /* if list items are <div> / <a> etc with light backgrounds, unify */
+  #appView[data-route="money"] .card .historyItem,
+  #appView[data-route="money"] .card .historyRow,
+  #appView[data-route="money"] .card .histItem,
+  #appView[data-route="money"] .card .txItem{
+    background: var(--card2) !important;
+    border: 1px solid var(--line) !important;
+    color: var(--text) !important;
+  }
+  #appView[data-route="money"] .card .historyItem *,
+  #appView[data-route="money"] .card .historyRow *,
+  #appView[data-route="money"] .card .histItem *,
+  #appView[data-route="money"] .card .txItem *{
+    color: var(--text) !important;
+  }
+
+  /* ensure history mini cards don't inherit light background from generic .pill or inputs */
+  #appView[data-route="money"] .card input,
+  #appView[data-route="money"] .card select,
+  #appView[data-route="money"] .card textarea{
+    color: var(--text);
+  }
+}
+
+/* =========================
+   iPhone: Money > Entries > History list visuals (dark + no blue link/button)
+   ========================= */
+@media (max-width: 480px) and (hover: none) and (pointer: coarse){
+  /* kill iOS default blue */
+  #appView[data-route="money"] a,
+  #appView[data-route="money"] a:visited,
+  #appView[data-route="money"] a:hover,
+  #appView[data-route="money"] a:active{
+    color: var(--text) !important;
+    text-decoration: none !important;
+  }
+
+  /* history list items are rendered as tappable elements on iPhone.
+     If they are plain <button> without .btn, they get iOS light gray + blue text.
+     Force them to match our card tone. */
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn){
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--card2) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 16px !important;
+    padding: 14px 14px !important;
+    width: 100% !important;
+    text-align: left !important;
+    box-shadow: none !important;
+  }
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn) *{
+    color: var(--text) !important;
+  }
+  #appView[data-route="money"] .card button:not(.btn):not(.tab):not(.chip):not(.pill):not(.segBtn):active{
+    background: rgba(255,255,255,.075) !important;
+  }
+
+  /* if list items are <div> / <a> etc with light backgrounds, unify */
+  #appView[data-route="money"] .card .historyItem,
+  #appView[data-route="money"] .card .historyRow,
+  #appView[data-route="money"] .card .histItem,
+  #appView[data-route="money"] .card .txItem{
+    background: var(--card2) !important;
+    border: 1px solid var(--line) !important;
+    color: var(--text) !important;
+  }
+  #appView[data-route="money"] .card .historyItem *,
+  #appView[data-route="money"] .card .historyRow *,
+  #appView[data-route="money"] .card .histItem *,
+  #appView[data-route="money"] .card .txItem *{
+    color: var(--text) !important;
+  }
+
+  /* ensure history mini cards don't inherit light background from generic .pill or inputs */
+  #appView[data-route="money"] .card input,
+  #appView[data-route="money"] .card select,
+  #appView[data-route="money"] .card textarea{
+    color: var(--text);
+  }
+}
