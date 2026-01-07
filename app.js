@@ -408,7 +408,14 @@ function statementMonthForEntry(card, entry){
 }
 function buildCardPaymentSchedule(){
   const cards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
-  const entries = (state.entries||[]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ" && e.creditCardId);
+  const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
+  const entries = (state.entries||[]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ").map(e=>{
+    if(e && !e.creditCardId && e.meta?.fixedCostId){
+      const fc = fixedMap.get(e.meta.fixedCostId);
+      if(fc?.creditCardId) return { ...e, creditCardId: fc.creditCardId };
+    }
+    return e;
+  }).filter(e=>e.creditCardId);
   const items = [];
   for(const c of cards){
     const es = entries.filter(e=>e.creditCardId===c.id);
