@@ -677,7 +677,7 @@ function renderHome(){
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
-	    <div class="card" data-home="soon" style="margin-bottom:12px;">
+	    <div class="card" style="margin-bottom:12px;">
 	      <div class="row">
 	        <h2 class="h1">90日以内の期限</h2>
 	        <div class="spacer"></div>
@@ -724,7 +724,7 @@ function renderHome(){
       if(!np || !np.total) return "";
       return `
         <div class="grid cols3" style="margin-top:12px;">
-          <div class="card" data-home="nextCardPay">
+          <div class="card">
             <div class="h2">次回クレカ支払予定</div>
             <div class="kpi">¥${yen(np.total)}</div>
             <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
@@ -770,7 +770,7 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card" data-home="cardPayList">
+      <div class="card">
         <div class="row">
           <h2 class="h1">クレカ支払予定</h2>
           <div class="spacer"></div>
@@ -1312,6 +1312,17 @@ function renderAccounts(){
   }
   const nextPay = computeNextCardPayment();
 
+// per-card next payment (today or later) - same logic as クレカ情報タブ
+const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+const now = new Date();
+const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+const nextByCard = new Map();
+schedule
+  .filter(x=>x.payDateMs>=today0)
+  .sort((a,b)=>a.payDateMs-b.payDateMs)
+  .forEach(x=>{ if(!nextByCard.has(x.cardId)) nextByCard.set(x.cardId, x); });
+
+
   const sbi = mb.find(x=>x.id==="sbi_net");
   const sbiPurpose = (state.master.sbiPurposeAccounts||[]).filter(x=>x.active!==false);
 
@@ -1330,7 +1341,7 @@ function renderAccounts(){
           <thead>
             <tr>
               <th>口座</th>
-              <th class="right">月末残高</th>
+              <th class="right">先月末残高</th>
               <th class="right">今月差分</th>
               <th class="right">推定残高</th>
             </tr>
@@ -1365,44 +1376,7 @@ function renderAccounts(){
           </tbody>
         </table>
 
-        <div class="sep" style="margin:14px 0;"></div>
-        <div class="small" style="margin:6px 0 8px;"><b>クレカ支払予定</b></div>
-        <table class="table">
-          <thead>
-            <tr>
-              <th>カード</th>
-              <th class="right">月末残高</th>
-              <th class="right">今月差分</th>
-              <th class="right">推定残高</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${(()=>{
-              const isPayableId = (id)=>{
-                const sid = String(id||"");
-                if(sid.startsWith("ccpay_")) return true;
-                const a = accounts.find(x=>x.id===id);
-                return a?.type==="liability" || a?.system===true;
-              };
-              const payableRows = mb.filter(x=>x.id!=="nisa" && isPayableId(x.id));
-              if(!payableRows.length) return `<tr><td colspan="4" class="small">（クレカ支払予定がありません）</td></tr>`;
-              return payableRows.map(a=>{
-                const d = deltaOf(a.id);
-                const est = Number(a.balance||0) + d;
-                return `
-                  <tr>
-                    <td>${escapeHtml(accountName(a.id))}</td>
-                    <td class="right">¥${yen(a.balance)}</td>
-                    <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
-                    <td class="right"><b>¥${yen(est)}</b></td>
-                  </tr>
-                `;
-              }).join("");
-            })()}
-          </tbody>
-        </table>
-<div class="small" style="margin-top:10px;">※月末残高は bundle（あれば）→ Firestore月末入力で上書き。今月差分は「入出金/移動」の口座指定から集計。（※クレカは「支払予定」に積み上げ、支払日を過ぎた分は表示上 自動引落を反映）</div>
-
+        
         ${sbi ? `
           <div class="sep"></div>
           <div class="h2">住信SBIネット銀行 目的別口座</div>
@@ -1418,6 +1392,24 @@ function renderAccounts(){
             </tbody>
           </table>
         `: ""}
+
+
+<div class="sep" style="margin:14px 0;"></div>
+<div class="h2">カード別：次回支払い予定</div>
+<div class="small muted" style="margin-top:6px;">※今日以降で一番近い支払日をカードごとに表示</div>
+<div class="sep" style="margin:10px 0;"></div>
+<table class="table">
+  <thead><tr><th>カード</th><th>支払日</th><th class="right">金額</th></tr></thead>
+  <tbody>
+    ${(activeCards.length===0) ? `<tr><td colspan="3" class="small">-</td></tr>` : activeCards.map(c=>{
+      const nx = nextByCard.get(c.id);
+      const d = nx ? new Date(nx.payDateMs).toLocaleDateString("ja-JP") : "-";
+      const a = nx ? `¥${yen(nx.amount)}` : "-";
+      return `<tr><td>${escapeHtml(c.cardName||"")}</td><td>${escapeHtml(d)}</td><td class="right" style="white-space:nowrap;">${escapeHtml(a)}</td></tr>`;
+    }).join("")}
+  </tbody>
+</table>
+
       </div>
 
       <div class="card">
@@ -1887,6 +1879,47 @@ function wireViewEvents(){
       openEntryModal("add");
     });
   }
+
+
+// entry detail (read-only)
+$$("[data-entrydetail]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const id = btn.dataset.entrydetail;
+    const e = state.entries.find(x=>x.id===id);
+    if(!e) return;
+    const typeLabel = ({income:"入金", expense:"出金", transfer:"資金移動", charge:"チャージ"})[e.type] || (e.type||"-");
+    const html = `
+      <div class="kv">
+        <div class="kvRow"><div class="kvKey">日付</div><div class="kvVal">${e.occurredAt ? new Date(Number(e.occurredAt)).toLocaleDateString("ja-JP") : "-"}</div></div>
+        <div class="kvRow"><div class="kvKey">種別</div><div class="kvVal">${escapeHtml(typeLabel)}</div></div>
+        <div class="kvRow"><div class="kvKey">カテゴリ</div><div class="kvVal">${escapeHtml(e.category||"-")}</div></div>
+        <div class="kvRow"><div class="kvKey">金額</div><div class="kvVal">¥${yen(e.amount||0)}</div></div>
+        ${e.fromAccountId ? `<div class="kvRow"><div class="kvKey">出金元</div><div class="kvVal">${escapeHtml(accountName(e.fromAccountId))}</div></div>` : ``}
+        ${e.toAccountId ? `<div class="kvRow"><div class="kvKey">入金先</div><div class="kvVal">${escapeHtml(accountName(e.toAccountId))}</div></div>` : ``}
+        ${e.memo ? `<div class="kvRow"><div class="kvKey">メモ</div><div class="kvVal">${escapeHtml(e.memo)}</div></div>` : ``}
+      </div>
+      <div class="sep"></div>
+      <div class="row" style="gap:10px;justify-content:flex-end;">
+        <button class="btn" id="btnDetailEdit">編集</button>
+        <button class="btn danger" id="btnDetailDel">削除</button>
+      </div>
+    `;
+    showModal("詳細", html);
+    const be = $("#btnDetailEdit");
+    const bd = $("#btnDetailDel");
+    if(be) be.addEventListener("click", ()=>{
+      closeModal();
+      openEntryModal("edit", e);
+    });
+    if(bd) bd.addEventListener("click", async ()=>{
+      if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+      closeModal();
+      if(!confirm("削除しますか？")) return;
+      await deleteDoc(doc(db, "months", state.month, "entries", id));
+      await reloadAll();
+    });
+  });
+});
 
   // edit/delete entry
   $$("[data-edit-entry]").forEach(btn=>{
