@@ -997,16 +997,16 @@ function renderAccounts(){
 
   const nisa = state.bundle?.nisa || null;
 
-  
-  const isPayableId = (id)=>{
-    const sid = String(id||"");
-    if(sid.startsWith("ccpay_")) return true;
-    const a = accounts.find(x=>x.id===id);
-    return a?.type==="liability" || a?.system===true;
-  };
-  const bankRows = mb.filter(x=>x.id!=="nisa" && !isPayableId(x.id));
-  const        <div class="small" style="margin:6px 0 8px;"><b>銀行・現金</b></div>
-<table class="table">
+  return `
+    <div class="grid cols2">
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">銀行口座・現金</h2>
+          <div class="spacer"></div>
+          <button class="btn" id="btnEditBalances">残高を入力/更新</button>
+        </div>
+        <div class="sep"></div>
+        <table class="table">
           <thead>
             <tr>
               <th>口座</th>
@@ -1016,57 +1016,72 @@ function renderAccounts(){
             </tr>
           </thead>
           <tbody>
-            ${bankRows.map(a=>{
-              const d = deltaOf(a.id);
-              const est = Number(a.balance||0) + d;
-              return `
-                <tr>
-                  <td>${escapeHtml(accountName(a.id))}${(()=>{ const out = Number(outstandingByPayAcc.get(a.id)||0); if(out<=0) return ""; const due = (nextPay && new Date(nextPay.payDateMs).getTime()>=0) ? ` / 次回：${escapeHtml(nextPay.dateStr)}` : ""; return `<div class="small">支払予定：▲¥${yen(out)}${due}</div>`; })()}</td>
-                  <td class="right">¥${yen(a.balance)}</td>
-                  <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
-                  <td class="right"><b>¥${yen(est)}</b></td>
-                </tr>
-              `;
-            }).join("")}
+            ${(()=>{
+              const isPayableId = (id)=>{
+                const sid = String(id||"");
+                if(sid.startsWith("ccpay_")) return true;
+                const a = accounts.find(x=>x.id===id);
+                return a?.type==="liability" || a?.system===true;
+              };
+              const bankRows = mb.filter(x=>x.id!=="nisa" && !isPayableId(x.id));
+              return bankRows.map(a=>{
+                const d = deltaOf(a.id);
+                const est = Number(a.balance||0) + d;
+                const out = Number(outstandingByPayAcc.get(a.id)||0);
+                const due = (nextPay && nextPay.paymentAccountId===a.id)
+                  ? `（次回 ${escapeHtml(nextPay.payMonth||"")}/${String(nextPay.payDay||"").padStart(2,"0")}）`
+                  : "";
+                const extra = out>0 ? `<div class="small">支払予定：▲¥${yen(out)}${due}</div>` : "";
+                return `
+                  <tr>
+                    <td>${escapeHtml(accountName(a.id))}${extra}</td>
+                    <td class="right">¥${yen(a.balance)}</td>
+                    <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
+                    <td class="right"><b>¥${yen(est)}</b></td>
+                  </tr>
+                `;
+              }).join("");
+            })()}
           </tbody>
         </table>
 
         <div class="sep" style="margin:14px 0;"></div>
         <div class="small" style="margin:6px 0 8px;"><b>クレカ支払予定</b></div>
-<table class="table">
+        <table class="table">
           <thead>
             <tr>
-              <th>口座</th>
+              <th>カード</th>
               <th class="right">月末残高</th>
               <th class="right">今月差分</th>
               <th class="right">推定残高</th>
             </tr>
           </thead>
           <tbody>
-            ${payableRows.map(a=>{
-              const d = deltaOf(a.id);
-              const est = Number(a.balance||0) + d;
-              return `
-                <tr>
-                  <td>${escapeHtml(accountName(a.id))}${(()=>{ const out = Number(outstandingByPayAcc.get(a.id)||0); if(out<=0) return ""; const due = (nextPay && new Date(nextPay.payDateMs).getTime()>=0) ? ` / 次回：${escapeHtml(nextPay.dateStr)}` : ""; return `<div class="small">支払予定：▲¥${yen(out)}${due}</div>`; })()}</td>
-                  <td class="right">¥${yen(a.balance)}</td>
-                  <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
-                  <td class="right"><b>¥${yen(est)}</b></td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>turn `<div class="small">支払予定：▲¥${yen(out)}${due}</div>`; })()}</td>
-                  <td class="right">¥${yen(a.balance)}</td>
-                  <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
-                  <td class="right"><b>¥${yen(est)}</b></td>
-                </tr>
-              `;
-            }).join("")}
+            ${(()=>{
+              const isPayableId = (id)=>{
+                const sid = String(id||"");
+                if(sid.startsWith("ccpay_")) return true;
+                const a = accounts.find(x=>x.id===id);
+                return a?.type==="liability" || a?.system===true;
+              };
+              const payableRows = mb.filter(x=>x.id!=="nisa" && isPayableId(x.id));
+              if(!payableRows.length) return `<tr><td colspan="4" class="small">（クレカ支払予定がありません）</td></tr>`;
+              return payableRows.map(a=>{
+                const d = deltaOf(a.id);
+                const est = Number(a.balance||0) + d;
+                return `
+                  <tr>
+                    <td>${escapeHtml(accountName(a.id))}</td>
+                    <td class="right">¥${yen(a.balance)}</td>
+                    <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
+                    <td class="right"><b>¥${yen(est)}</b></td>
+                  </tr>
+                `;
+              }).join("");
+            })()}
           </tbody>
         </table>
-
-        <div class="small" style="margin-top:10px;">※月末残高は bundle（あれば）→ Firestore月末入力で上書き。今月差分は「入出金/移動」の口座指定から集計。（※クレカは「支払予定」に積み上げ、支払日を過ぎた分は表示上 自動引落を反映）</div>
+<div class="small" style="margin-top:10px;">※月末残高は bundle（あれば）→ Firestore月末入力で上書き。今月差分は「入出金/移動」の口座指定から集計。（※クレカは「支払予定」に積み上げ、支払日を過ぎた分は表示上 自動引落を反映）</div>
 
         ${sbi ? `
           <div class="sep"></div>
