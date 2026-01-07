@@ -648,18 +648,27 @@ function renderHome(){
 
 
 
+    <div class="card" style="margin-top:12px;">
+      <div class="row">
+        <h2 class="h1">口座合計（入力/差分反映後）</h2>
+        <div class="spacer"></div>
+        <span class="badge">銀行・現金 ¥${yen(totalBankEst)}</span>
+        <span class="badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
+        <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
+      </div>
+      <div class="small" style="margin-top:10px;opacity:.8;">
+        ※推定残高＝（月末残高 or 入力残高）＋今月差分（入出金/資金移動/固定費自動反映）＋クレカ引落（支払日到来分）
+      </div>
+    </div>
+
     <div class="grid cols2" style="margin-top:12px;">
       <div class="card">
         <div class="row">
-          <h2 class="h1">口座（推定）</h2>
+          <h2 class="h1">銀行口座・現金</h2>
           <div class="spacer"></div>
-          <span class="badge">銀行・現金 ¥${yen(totalBankEst)}</span>
-          <span class="badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
-          <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
+          <span class="badge">合計 ¥${yen(totalBankEst)}</span>
         </div>
         <div class="sep"></div>
-
-        <div class="small" style="margin:6px 0 8px;"><b>銀行口座・現金</b></div>
         <table class="table">
           <thead><tr><th>口座</th><th class="right">推定残高</th></tr></thead>
           <tbody>
@@ -671,10 +680,15 @@ function renderHome(){
             `).join("")}
           </tbody>
         </table>
+      </div>
 
-        <div class="sep" style="margin:14px 0;"></div>
-
-        <div class="small" style="margin:6px 0 8px;"><b>クレカ支払予定</b></div>
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">クレカ支払予定</h2>
+          <div class="spacer"></div>
+          <span class="badge">合計 ¥${yen(totalCardOutstanding)}</span>
+        </div>
+        <div class="sep"></div>
         <table class="table">
           <thead><tr><th>カード</th><th class="right">推定残高</th></tr></thead>
           <tbody>
@@ -686,10 +700,6 @@ function renderHome(){
             `).join("")}
           </tbody>
         </table>
-
-        <div class="small" style="margin-top:10px;opacity:.8;">
-          ※推定残高＝（月末残高 or 入力残高）＋今月差分（入出金/資金移動/固定費自動反映）＋クレカ引落（支払日到来分）
-        </div>
       </div>
 
       <div class="card">
