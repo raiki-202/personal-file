@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
 import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, deleteDoc, updateDoc,
-  query, orderBy
+  query, where, orderBy
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 /** =========================
@@ -143,6 +143,10 @@ async function loadMonthData(month){
 
   // Prefer new people_persons if exists
   state.family = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : legacyFamily;
+
+  // Auto-sync birthdays to events (idempotent). Requires editor/admin.
+  await syncBirthdayEvents();
+
 
   const s6 = await getDocs(query(collection(db, "creditCards"), orderBy("cardName","asc")));
   // Normalize: ensure each card has its own payable account id
@@ -1566,16 +1570,17 @@ function renderEvents(){
   const suggested = [];
 
   // family birthdays
-  (state.family||[]).filter(f=>f.active!==false).forEach(f=>{
-    const ms = nextBirthdayMs(f.birthDate);
+  ( (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[]) ).filter(f=>f.active!==false).forEach(f=>{
+    const ms = nextBirthdayMs(f.birth_date || f.birthDate || "");
     if(ms && withinDays(ms, 90)){
-      const key = `family:${f.id}:birthday:${ms}`;
+      const st = (state.peoplePersons && state.peoplePersons.length) ? "people_persons" : "family";
+      const key = `${st}:${f.id}:birthday:${ms}`;
       if(!exists.has(key)){
         suggested.push({
           title: `${f.name||"家族"} 誕生日`,
           type: "birthday",
           date: ms,
-          sourceType: "family",
+          sourceType: (state.peoplePersons && state.peoplePersons.length) ? "people_persons" : "family",
           sourceId: f.id
         });
       }
@@ -2090,6 +2095,12 @@ function showModal(title, html){
   $("#modalOverlay").style.display = "flex";
   $("#modalOverlay").setAttribute("aria-hidden","false");
 }
+
+// alias (older patches used openModal name)
+function openModal(title, html){
+  return showModal(title, html);
+}
+
 function hideModal(){
   $("#modalOverlay").style.display = "none";
   $("#modalOverlay").setAttribute("aria-hidden","true");
@@ -3538,4 +3549,57 @@ onAuthStateChanged(auth, async (user)=>{
     console.error(e);
     alert(`読み込みエラー: ${e.message}`);
   }
-});
+})
+
+async function syncBirthdayEvents(){
+  // viewer cannot write; also avoid failing the whole load on permission errors
+  if(state.role==="viewer") return;
+  const persons = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : [];
+  if(persons.length===0) return;
+
+  // parse YYYY-MM-DD
+  function parseYmd(s){
+    if(!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+    if(m) return {y:+m[1], mo:+m[2], d:+m[3]};
+    return null;
+  }
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  function nextBirthdayMs(birth){
+    const p = parseYmd(birth);
+    if(!p) return null;
+    const now = new Date();
+    let y = now.getFullYear();
+    let dt = new Date(y, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    if(dt < today0.getTime()) dt = new Date(y+1, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    return dt;
+  }
+
+  let changed = false;
+  for(const p of persons){
+    if(p.active===false) continue;
+    const b = p.birth_date || p.birthDate || "";
+    const ms = nextBirthdayMs(b);
+    if(!ms) continue;
+    try{
+      await upsertEventBySource({
+        sourceType: "people_persons",
+        sourceId: p.id,
+        type: "birthday",
+        title: `${p.name||"家族"} 誕生日`,
+        date: ms
+      });
+      changed = true;
+    }catch(e){
+      // permissions or missing index should not break app
+      console.warn("[syncBirthdayEvents] skipped:", e.message);
+    }
+  }
+
+  if(changed){
+    const s4b = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
+    state.events = s4b.docs.map(d=>({id:d.id, ...d.data()}));
+  }
+}
+
+;
