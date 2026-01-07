@@ -1253,48 +1253,9 @@ function renderMoneyEntries(){
 
       </div>
 
-      ${(()=>{
-        const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-        const now = new Date();
-        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
-        // NOTE: renderMoneyEntries() のスコープには「visible」が無いので、ここで表示対象カードを確定する
-        const cards = (state.creditCards||[]).filter(c=> (c.active!==false) && (c.status!=="stopped"));
-        const rows = cards.map(c=>{
-          const up = schedule.filter(s=>s.cardId===c.id && s.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs)[0];
-          if(!up) return { cardName:c.cardName||c.id, date:"-", amount:0, payMonth:"-" };
-          return { cardName:c.cardName||c.id, date:new Date(up.payDateMs).toLocaleDateString("ja-JP"), amount:up.amount, payMonth: up.payMonth };
-        });
-        if(!rows.length) return "";
-        const hasAny = rows.some(r=>r.amount!==0);
-        if(!hasAny) return "";
-        return `
-          <div class="sep"></div>
-          <div class="h2">次回支払予定（カード別）</div>
-          <div class="small" style="margin-top:4px;">※締め日・支払日・（必要なら）楽天市場25日締めを反映して自動算出</div>
-          <div style="overflow:auto; margin-top:10px;">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>カード</th>
-                  <th class="right">次回支払予定</th>
-                  <th>支払日</th>
-                  <th>対象（支払月）</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map(r=>`
-                  <tr>
-                    <td>${escapeHtml(r.cardName)}</td>
-                    <td class="right">${r.amount?`¥${yen(r.amount)}`:"-"}</td>
-                    <td>${escapeHtml(r.date)}</td>
-                    <td>${escapeHtml(r.payMonth)}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
-        `;
-      })()}
+      ${""}
+
+
 
       <div class="sep"></div>
       <table class="table">
