@@ -123,7 +123,14 @@ async function loadMonthData(month){
   state.family = s5.docs.map(d=>({id:d.id, ...d.data()}));
 
   const s6 = await getDocs(query(collection(db, "creditCards"), orderBy("cardName","asc")));
-  state.creditCards = s6.docs.map(d=>({id:d.id, ...d.data()}));
+  // Normalize: ensure each card has its own payable account id
+  state.creditCards = s6.docs.map(d=>{
+    const raw = {id:d.id, ...d.data()};
+    return {
+      ...raw,
+      payableAccountId: payableAccountIdForCardId(d.id)
+    };
+  });
 
   const s7 = await getDocs(query(collection(db, "cars"), orderBy("carName","asc")));
   state.cars = s7.docs.map(d=>({id:d.id, ...d.data()}));
@@ -140,6 +147,16 @@ async function loadMonthData(month){
   const s11 = await getDocs(query(collection(db, "homeEquipments"), orderBy("equipmentName","asc")));
   state.homeEquipments = s11.docs.map(d=>({id:d.id, ...d.data()}));
 
+  // Normalize entries: if credit card expense, post to that card's payable account (display + delta calc)
+  if(Array.isArray(state.entries)){
+    state.entries = state.entries.map(e=>{
+      if(e?.type==="expense" && e?.paymentMethod==="クレカ" && e?.creditCardId){
+        return { ...e, fromAccountId: payableAccountIdForCardId(e.creditCardId) };
+      }
+      return e;
+    });
+  }
+
 }
 
 /** =========================
@@ -149,7 +166,22 @@ function getAllAccountsFromMaster(){
   const banks = (state.master?.banks || []).filter(x=>x.active!==false);
   const other = (state.master?.otherAccounts || []).filter(x=>x.active!==false);
   const list = [...banks, ...other];
+
+  // Auto-generated payable accounts per credit card (system)
+  // id: ccpay_<cardId>, name: "<cardName>（支払予定）"
+  for(const c of (state.creditCards||[])){
+    if(!c || !c.id) continue;
+    const id = payableAccountIdForCardId(c.id);
+    // Avoid duplicates (in case master.otherAccounts already contains it)
+    if(list.some(a=>a.id===id)) continue;
+    list.push({ id, name: `${c.cardName||c.id}（支払予定）`, type:"liability", system:true, active:true });
+  }
+
   return list;
+}
+
+function payableAccountIdForCardId(cardId){
+  return `ccpay_${cardId}`;
 }
 
 function accountName(id){
@@ -249,7 +281,7 @@ function autoCardPaymentDeltasForMonth(monthKey){
     if(s.payDateMs>today0) continue; // not yet debited
     const card = getCreditCardById(s.cardId);
     const payAcc = card?.paymentAccountId || "rakuten";
-    const payable = card?.payableAccountId || "rakuten_card_payable";
+    const payable = payableAccountIdForCardId(s.cardId);
     const amt = Number(s.amount||0);
     if(!amt) continue;
     deltas.set(payAcc, (deltas.get(payAcc)||0) - amt);
@@ -952,7 +984,7 @@ function renderAccounts(){
   const outstandingByPayAcc = new Map();
   for(const c of activeCards){
     const payAcc = c.paymentAccountId || "rakuten";
-    const payableId = c.payableAccountId || "rakuten_card_payable";
+    const payableId = payableAccountIdForCardId(c.id);
     const pb = (mb.find(x=>x.id===payableId)?.balance||0);
     const est = Number(pb) + deltaOf(payableId);
     const out = est<0 ? (-est) : 0;
@@ -1775,7 +1807,8 @@ function openEntryModal(mode, entry=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
   const type = state._moneyTab || "income";
   const cats = type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories);
-  const accounts = getAllAccountsFromMaster();
+  // In entry forms, hide system-generated payable accounts (they are chosen automatically when paymentMethod is クレカ)
+  const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
   const opts = (selectedId)=> accounts.map(a=>`<option value="${escapeHtml(a.id)}" ${a.id===selectedId?"selected":""}>${escapeHtml(a.name)}</option>`).join("");
 
   const occurred = entry?.occurredAt ? new Date(Number(entry.occurredAt)) : new Date();
@@ -1899,8 +1932,8 @@ $("#m_save").addEventListener("click", async ()=>{
     let effectiveCardId = null;
     if(type==="expense" && paymentMethod==="クレカ"){
       effectiveCardId = creditCardId || null;
-      const card = effectiveCardId ? getCreditCardById(effectiveCardId) : null;
-      effectiveFrom = (card?.payableAccountId) || "rakuten_card_payable";
+      // Always post to this card's payable account (auto-generated)
+      effectiveFrom = effectiveCardId ? payableAccountIdForCardId(effectiveCardId) : null;
     }
 
     const payload = {
@@ -1927,7 +1960,8 @@ $("#m_save").addEventListener("click", async ()=>{
 
 function openBalancesModal(){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const accounts = getAllAccountsFromMaster();
+  // Do not ask for manual month-end balances for system-generated payable accounts
+  const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
   const mb = mergedBalances();
   const get = (id)=> mb.find(x=>x.id===id)?.balance || 0;
 
@@ -2090,10 +2124,9 @@ function openCardModal(mode, item=null){
         </select>
       </div>
       <div>
-        <div class="small">支払予定口座</div>
-        <select id="c_payable" class="input">
-          ${([...(state.master.otherAccounts||[])]).filter(x=>x.active!==false).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join("")}
-        </select>
+        <div class="small">支払予定口座（自動）</div>
+        <input id="c_payableName" class="input" disabled value="${escapeHtml(item?.id ? `${(item?.cardName||item?.id)}（支払予定）` : "（保存後に自動作成）")}" />
+        <input id="c_payableId" type="hidden" value="${escapeHtml(item?.id ? payableAccountIdForCardId(item.id) : "")}" />
       </div>
       <div>
         <div class="small">例外締め（任意）</div>
@@ -2127,7 +2160,6 @@ function openCardModal(mode, item=null){
   if($("#c_paymo")) $("#c_paymo").value = String(item?.paymentMonthOffset ?? 1);
   if($("#c_payday")) $("#c_payday").value = String(Number(item?.paymentDay||27));
   if($("#c_payacc")) $("#c_payacc").value = (item?.paymentAccountId ?? "rakuten");
-  if($("#c_payable")) $("#c_payable").value = (item?.payableAccountId ?? "rakuten_card_payable");
   if($("#c_ex_channel")) $("#c_ex_channel").value = (item?.exceptionChannel ?? (((item?.cardName||"").includes("楽天")) ? "楽天市場" : ""));
   if($("#c_ex_day")) $("#c_ex_day").value = String(item?.exceptionClosingDay ?? (((item?.cardName||"").includes("楽天")) ? 25 : ""));
 
@@ -2142,7 +2174,8 @@ $("#c_save").addEventListener("click", async ()=>{
       paymentMonthOffset: Number($("#c_paymo") ? $("#c_paymo").value : 1) || 1,
       paymentDay: Number($("#c_payday") ? $("#c_payday").value : 0) || 27,
       paymentAccountId: $("#c_payacc") ? $("#c_payacc").value : "rakuten",
-      payableAccountId: $("#c_payable") ? $("#c_payable").value : "rakuten_card_payable",
+      // payable account is auto-generated per card
+      payableAccountId: (mode==="edit" && item?.id) ? payableAccountIdForCardId(item.id) : null,
       exceptionChannel: $("#c_ex_channel") ? ($("#c_ex_channel").value || "") : "",
       exceptionClosingDay: ($("#c_ex_day" && $("#c_ex_day").value!=="") ? Number($("#c_ex_day").value) : null),
 
@@ -2152,7 +2185,12 @@ $("#c_save").addEventListener("click", async ()=>{
       updatedAt: Date.now(),
     };
     if(mode==="add"){
-      await addDoc(collection(db, "creditCards"), payload);
+      const ref = await addDoc(collection(db, "creditCards"), payload);
+      // set per-card payable account id (deterministic)
+      await updateDoc(doc(db, "creditCards", ref.id), {
+        payableAccountId: payableAccountIdForCardId(ref.id),
+        updatedAt: Date.now()
+      });
     }else{
       await updateDoc(doc(db, "creditCards", item.id), payload);
     }
