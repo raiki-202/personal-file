@@ -37,6 +37,8 @@ const state = {
   fixedCosts: [],
   events: [],
   family: [],
+  peoplePersons: [],
+  peopleHealthByPersonId: {},
   creditCards: [],
   cars: [],
   homes: [],
@@ -122,9 +124,25 @@ async function loadMonthData(month){
 
   const s4 = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
   state.events = s4.docs.map(d=>({id:d.id, ...d.data()}));
-  // family / others (for event suggestions)
+  // people (family) - new schema
+  const sP = await getDocs(query(collection(db, "people_persons"), orderBy("name","asc")));
+  state.peoplePersons = sP.docs.map(d=>({id:d.id, ...d.data()}));
+
+  const sH = await getDocs(collection(db, "people_health"));
+  const healthMap = {};
+  sH.docs.forEach(d=>{
+    const v = {id:d.id, ...d.data()};
+    const pid = v.person_id || d.id;
+    healthMap[pid] = v;
+  });
+  state.peopleHealthByPersonId = healthMap;
+
+  // legacy family (fallback / compatibility)
   const s5 = await getDocs(query(collection(db, "family"), orderBy("name","asc")));
-  state.family = s5.docs.map(d=>({id:d.id, ...d.data()}));
+  const legacyFamily = s5.docs.map(d=>({id:d.id, ...d.data()}));
+
+  // Prefer new people_persons if exists
+  state.family = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : legacyFamily;
 
   const s6 = await getDocs(query(collection(db, "creditCards"), orderBy("cardName","asc")));
   // Normalize: ensure each card has its own payable account id
@@ -731,24 +749,39 @@ function renderHome(){
 
 
 function renderFamily(){
-  const list = (state.family||[]);
+  const persons = (state.peoplePersons && state.peoplePersons.length)
+    ? state.peoplePersons
+    : (state.family || []);
+
   const showInactive = !!state._showInactiveFamily;
-  const rows = list
-    .filter(x=> showInactive ? true : (x.active!==false))
-    .map(x=>{
-      const bd = x.birthDate ? escapeHtml(x.birthDate) : "-";
-      const rel = x.relation ? escapeHtml(x.relation) : "-";
-      const memo = x.memo ? escapeHtml(x.memo) : "";
-      const inactive = (x.active===false);
+  const rows = persons
+    .filter(p=> showInactive ? true : (p.is_living_with!==false && p.active!==false))
+    .map(p=>{
+      const inactive = (p.active===false) || (p.is_living_with===false);
+      const rel = p.relation || "-";
+      const bd = p.birth_date || p.birthDate || "-";
+      const kana = p.name_kana || "-";
+      const phone = p.phone_number || "-";
+      const mail = p.email || "-";
+      const notes = p.notes || p.memo || "";
+      const health = state.peopleHealthByPersonId?.[p.id] || null;
+      const bt = health?.blood_type || "-";
+      const allergy = health?.allergies || "-";
       return `
         <tr class="${inactive?'dim':''}">
-          <td>${escapeHtml(x.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
-          <td>${rel}</td>
-          <td>${bd}</td>
-          <td class="muted">${memo}</td>
+          <td>${escapeHtml(p.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
+          <td>${escapeHtml(rel)}</td>
+          <td>${escapeHtml(bd)}</td>
+          <td>${escapeHtml(kana)}</td>
+          <td>${escapeHtml(phone)}</td>
+          <td>${escapeHtml(mail)}</td>
+          <td class="muted">${escapeHtml(notes)}</td>
+          <td class="muted">${escapeHtml(bt)}</td>
+          <td class="muted">${escapeHtml(allergy)}</td>
           <td class="right">
-            <button class="btn mini" data-edit-family="${x.id}">編集</button>
-            <button class="btn mini danger" data-del-family="${x.id}">削除</button>
+            <button class="btn mini" data-edit-person="${p.id}">基本情報</button>
+            <button class="btn mini secondary" data-edit-health="${p.id}">健康</button>
+            <button class="btn mini danger" data-del-person="${p.id}">削除</button>
           </td>
         </tr>
       `;
@@ -763,7 +796,7 @@ function renderFamily(){
           <input id="toggleFamilyInactive" type="checkbox" ${showInactive?"checked":""}/>
           <span>無効も表示</span>
         </label>
-        <button class="btn" id="btnAddFamily">＋追加</button>
+        <button class="btn" id="btnAddPerson">＋追加</button>
       </div>
       <div class="sep"></div>
 
@@ -773,25 +806,29 @@ function renderFamily(){
             <tr>
               <th>名前</th>
               <th>続柄</th>
-              <th>生年月日</th>
+              <th>誕生日</th>
+              <th>ふりがな</th>
+              <th>電話</th>
+              <th>メール</th>
               <th>メモ</th>
+              <th>血液型</th>
+              <th>アレルギー</th>
               <th class="right">操作</th>
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="5" class="muted">まだありません。</td></tr>`}
+            ${rows || `<tr><td colspan="10" class="muted">まだありません。</td></tr>`}
           </tbody>
         </table>
       </div>
 
       <div class="muted small" style="margin-top:10px;">
-        ・家族の誕生日などは「定期イベント（90日以内）」に自動で拾います（実装済み/準備中）。
+        ・基本情報は <code>people_persons</code>、健康情報は <code>people_health</code> に保存します。<br/>
+        ・誕生日などは「定期イベント（90日以内）」に拾えるよう拡張しやすい構造にしています。
       </div>
     </div>
   `;
 }
-
-
 
 function renderCar(){
   const list = (state.cars||[]).slice().sort((a,b)=> (a.carName||"").localeCompare(b.carName||""));
@@ -1871,10 +1908,10 @@ function wireViewEvents(){
   const btnOpenRules = $("#btnOpenRules");
   if(btnOpenRules) btnOpenRules.addEventListener("click", ()=> window.open("./firestore.rules","_blank"));
 
-  // family
-  const btnAddFamily = $("#btnAddFamily");
-  if(btnAddFamily){
-    btnAddFamily.addEventListener("click", ()=> openFamilyModal("add"));
+  // family (people_persons / people_health)
+  const btnAddPerson = $("#btnAddPerson");
+  if(btnAddPerson){
+    btnAddPerson.addEventListener("click", ()=> openPersonModal("add"));
   }
   const toggleFamilyInactive = $("#toggleFamilyInactive");
   if(toggleFamilyInactive){
@@ -1883,18 +1920,30 @@ function wireViewEvents(){
       mount();
     });
   }
-  $$("[data-edit-family]").forEach(btn=>{
+  $$("[data-edit-person]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
-      const id = btn.dataset.editFamily;
-      openFamilyModal("edit", state.family.find(x=>x.id===id));
+      const id = btn.dataset.editPerson;
+      const p = (state.peoplePersons||state.family||[]).find(x=>x.id===id);
+      openPersonModal("edit", p);
     });
   });
-  $$("[data-del-family]").forEach(btn=>{
+  $$("[data-edit-health]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.dataset.editHealth;
+      const p = (state.peoplePersons||state.family||[]).find(x=>x.id===id);
+      openHealthModal(p);
+    });
+  });
+  $$("[data-del-person]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-      const id = btn.dataset.delFamily;
-      if(!confirm("削除しますか？")) return;
-      await deleteDoc(doc(db, "family", id));
+      const id = btn.dataset.delPerson;
+      if(!confirm("削除しますか？（健康情報も削除）")) return;
+      // delete both
+      await deleteDoc(doc(db, "people_persons", id)).catch(()=>{});
+      await deleteDoc(doc(db, "people_health", id)).catch(()=>{});
+      // legacy cleanup if exists
+      await deleteDoc(doc(db, "family", id)).catch(()=>{});
       await reloadAll();
     });
   });
@@ -3160,6 +3209,228 @@ function openFamilyModal(mode, item=null){
       await reloadAll();
     });
   }
+}
+
+
+/** =========================
+ *  People (Family) - new schema
+ * ========================= */
+function openPersonModal(mode, item=null){
+  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+
+  const isEdit = mode==="edit";
+  const p = item || {
+    name:"", relation:"self", birth_date:"", gender:"",
+    name_kana:"", is_living_with:true,
+    phone_number:"", email:"", notes:""
+  };
+
+  openModal(isEdit ? "家族：基本情報（編集）" : "家族：基本情報（追加）", `
+    <div class="formGrid">
+      <div>
+        <div class="small">名前</div>
+        <input id="pp_name" class="input" value="${escapeHtml(p.name||"")}" />
+      </div>
+      <div>
+        <div class="small">ふりがな</div>
+        <input id="pp_kana" class="input" value="${escapeHtml(p.name_kana||"")}" />
+      </div>
+
+      <div>
+        <div class="small">続柄</div>
+        <select id="pp_relation" class="input">
+          ${["self","spouse","child","other"].map(v=>`<option value="${v}" ${(p.relation||"other")===v?"selected":""}>${v}</option>`).join("")}
+        </select>
+      </div>
+
+      <div>
+        <div class="small">誕生日</div>
+        <input id="pp_birth" class="input" placeholder="YYYY/MM/DD" value="${escapeHtml(p.birth_date||p.birthDate||"")}" />
+      </div>
+
+      <div>
+        <div class="small">性別（任意）</div>
+        <input id="pp_gender" class="input" placeholder="male / female / other" value="${escapeHtml(p.gender||"")}" />
+      </div>
+
+      <div>
+        <div class="small">同居</div>
+        <select id="pp_living" class="input">
+          <option value="true" ${(p.is_living_with!==false)?"selected":""}>true</option>
+          <option value="false" ${(p.is_living_with===false)?"selected":""}>false</option>
+        </select>
+      </div>
+
+      <div>
+        <div class="small">電話（任意）</div>
+        <input id="pp_phone" class="input" value="${escapeHtml(p.phone_number||"")}" />
+      </div>
+
+      <div>
+        <div class="small">メール（任意）</div>
+        <input id="pp_email" class="input" value="${escapeHtml(p.email||"")}" />
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">メモ</div>
+        <textarea id="pp_notes" class="input" rows="3" placeholder="">${escapeHtml(p.notes||p.memo||"")}</textarea>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="btn" id="pp_save">保存</button>
+      <div class="spacer"></div>
+      ${isEdit ? `<button class="btn secondary" id="pp_open_health">健康情報を編集</button>` : `<span class="small muted">※保存後に健康情報を追加できます</span>`}
+    </div>
+  `);
+
+  $("#pp_save")?.addEventListener("click", async ()=>{
+    const name = $("#pp_name").value.trim();
+    if(!name){ alert("名前は必須です"); return; }
+
+    const payload = {
+      name,
+      relation: $("#pp_relation").value,
+      birth_date: $("#pp_birth").value.trim(),
+      gender: $("#pp_gender").value.trim(),
+      name_kana: $("#pp_kana").value.trim(),
+      is_living_with: $("#pp_living").value === "true",
+      phone_number: $("#pp_phone").value.trim(),
+      email: $("#pp_email").value.trim(),
+      notes: $("#pp_notes").value.trim(),
+      updatedAt: Date.now()
+    };
+
+    if(isEdit){
+      await setDoc(doc(db, "people_persons", p.id), payload, { merge: true });
+      // legacy mirror (optional): keep family in sync for older screens
+      await setDoc(doc(db, "family", p.id), {
+        name: payload.name,
+        relation: payload.relation,
+        birthDate: payload.birth_date,
+        memo: payload.notes,
+        active: payload.is_living_with
+      }, { merge: true }).catch(()=>{});
+    }else{
+      const ref = await addDoc(collection(db, "people_persons"), { ...payload, createdAt: Date.now() });
+      // legacy mirror
+      await setDoc(doc(db, "family", ref.id), {
+        name: payload.name,
+        relation: payload.relation,
+        birthDate: payload.birth_date,
+        memo: payload.notes,
+        active: payload.is_living_with
+      }, { merge: true }).catch(()=>{});
+    }
+
+    closeModal();
+    await reloadAll();
+  });
+
+  $("#pp_open_health")?.addEventListener("click", ()=>{
+    closeModal();
+    openHealthModal(p);
+  });
+}
+
+function openHealthModal(person){
+  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+  if(!person?.id){ alert("先に基本情報を保存してください"); return; }
+
+  const h = state.peopleHealthByPersonId?.[person.id] || { person_id: person.id };
+
+  openModal(`健康情報：${escapeHtml(person.name||"")}`, `
+    <div class="formGrid">
+      <div>
+        <div class="small">血液型</div>
+        <input id="ph_blood" class="input" value="${escapeHtml(h.blood_type||"")}" />
+      </div>
+      <div>
+        <div class="small">身長</div>
+        <input id="ph_height" class="input" value="${escapeHtml(h.height||"")}" />
+      </div>
+      <div>
+        <div class="small">体重</div>
+        <input id="ph_weight" class="input" value="${escapeHtml(h.weight||"")}" />
+      </div>
+      <div>
+        <div class="small">アレルギー</div>
+        <input id="ph_allergy" class="input" value="${escapeHtml(h.allergies||"")}" />
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">持病</div>
+        <textarea id="ph_chronic" class="input" rows="2">${escapeHtml(h.chronic_diseases||"")}</textarea>
+      </div>
+      <div style="grid-column:1/-1;">
+        <div class="small">常用薬</div>
+        <textarea id="ph_medicine" class="input" rows="2">${escapeHtml(h.regular_medicine||"")}</textarea>
+      </div>
+
+      <div>
+        <div class="small">かかりつけ病院</div>
+        <input id="ph_hospital" class="input" value="${escapeHtml(h.hospital_name||"")}" />
+      </div>
+      <div>
+        <div class="small">最終健診日</div>
+        <input id="ph_checkup" class="input" placeholder="YYYY/MM/DD" value="${escapeHtml(h.last_checkup||"")}" />
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">通院歴・手術歴</div>
+        <textarea id="ph_history" class="input" rows="3">${escapeHtml(h.medical_history||"")}</textarea>
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">定期通院予定</div>
+        <textarea id="ph_regular" class="input" rows="2">${escapeHtml(h.regular_visit_schedule||"")}</textarea>
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">ワクチン履歴</div>
+        <textarea id="ph_vaccine" class="input" rows="3">${escapeHtml(h.vaccination_history||"")}</textarea>
+      </div>
+
+      <div style="grid-column:1/-1;">
+        <div class="small">メモ</div>
+        <textarea id="ph_notes" class="input" rows="3">${escapeHtml(h.notes||"")}</textarea>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="btn" id="ph_save">保存</button>
+      <div class="spacer"></div>
+      <button class="btn secondary" id="ph_back">戻る</button>
+    </div>
+  `);
+
+  $("#ph_save")?.addEventListener("click", async ()=>{
+    const payload = {
+      person_id: person.id,
+      blood_type: $("#ph_blood").value.trim(),
+      height: $("#ph_height").value.trim(),
+      weight: $("#ph_weight").value.trim(),
+      allergies: $("#ph_allergy").value.trim(),
+      chronic_diseases: $("#ph_chronic").value.trim(),
+      regular_medicine: $("#ph_medicine").value.trim(),
+      hospital_name: $("#ph_hospital").value.trim(),
+      last_checkup: $("#ph_checkup").value.trim(),
+      medical_history: $("#ph_history").value.trim(),
+      regular_visit_schedule: $("#ph_regular").value.trim(),
+      vaccination_history: $("#ph_vaccine").value.trim(),
+      notes: $("#ph_notes").value.trim(),
+      updatedAt: Date.now()
+    };
+    await setDoc(doc(db, "people_health", person.id), payload, { merge: true });
+    closeModal();
+    await reloadAll();
+    // re-open family view at same route
+  });
+
+  $("#ph_back")?.addEventListener("click", ()=>{
+    closeModal();
+    openPersonModal("edit", person);
+  });
 }
 
 
