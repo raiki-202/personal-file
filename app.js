@@ -586,7 +586,31 @@ function renderHome(){
   const accounts = getAllAccountsFromMaster();
   const nameOf = (id)=> (accounts.find(a=>a.id===id)?.name || id);
 
-  const totalCash = mb.reduce((s,x)=> s + Number(x.balance||0), 0);
+  const deltas = accountDeltasFromEntries();
+  const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
+  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+
+  const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
+  const payableRows = activeCards.map(c=>{
+    const payableId = payableAccountIdForCardId(c.id);
+    const baseBal = Number(mb.find(x=>x.id===payableId)?.balance||0);
+    const estBal = baseBal + deltaOf(payableId);
+    return { cardId:c.id, cardName:c.cardName||c.name||"(no name)", id:payableId, baseBal, delta: deltaOf(payableId), estBal };
+  });
+
+  const bankRows = mb
+    .filter(a=> !String(a.id||"").startsWith("ccpay_") && (accounts.find(x=>x.id===a.id)?.type||"")!=="liability")
+    .map(a=>{
+      const baseBal = Number(a.balance||0);
+      const d = deltaOf(a.id);
+      return { id:a.id, name:nameOf(a.id), baseBal, delta:d, estBal: baseBal + d };
+    });
+
+  const totalBankEst = bankRows.reduce((s,r)=> s + r.estBal, 0);
+  const totalCardOutstanding = payableRows.reduce((s,r)=> s + (r.estBal<0 ? -r.estBal : 0), 0);
+  const totalNetEst = totalBankEst - totalCardOutstanding;
+
+  const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
@@ -627,23 +651,45 @@ function renderHome(){
     <div class="grid cols2" style="margin-top:12px;">
       <div class="card">
         <div class="row">
-          <h2 class="h1">口座合計（入力/差分反映後）</h2>
+          <h2 class="h1">口座（推定）</h2>
           <div class="spacer"></div>
-          <span class="badge">合計 ¥${yen(totalCash)}</span>
+          <span class="badge">銀行・現金 ¥${yen(totalBankEst)}</span>
+          <span class="badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
+          <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
         </div>
         <div class="sep"></div>
+
+        <div class="small" style="margin:6px 0 8px;"><b>銀行口座・現金</b></div>
         <table class="table">
-          <thead><tr><th>口座</th><th class="right">残高</th></tr></thead>
+          <thead><tr><th>口座</th><th class="right">推定残高</th></tr></thead>
           <tbody>
-            ${mb.map(a=>`
+            ${bankRows.map(r=>`
               <tr>
-                <td>${escapeHtml(nameOf(a.id))}${a.id==="sbi_net" ? "（目的別あり）":""}</td>
-                <td class="right">¥${yen(a.balance)}</td>
+                <td>${escapeHtml(r.name)}${r.id==="sbi_net" ? "（目的別あり）":""}</td>
+                <td class="right">¥${yen(r.estBal)}</td>
               </tr>
             `).join("")}
           </tbody>
         </table>
-        <div class="small" style="margin-top:10px;">※表示は bundle（あれば）→ Firestore月末入力で上書き</div>
+
+        <div class="sep" style="margin:14px 0;"></div>
+
+        <div class="small" style="margin:6px 0 8px;"><b>クレカ支払予定</b></div>
+        <table class="table">
+          <thead><tr><th>カード</th><th class="right">推定残高</th></tr></thead>
+          <tbody>
+            ${payableRows.map(r=>`
+              <tr>
+                <td>${escapeHtml(r.cardName)}（支払予定）</td>
+                <td class="right">¥${yen(r.estBal)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+
+        <div class="small" style="margin-top:10px;opacity:.8;">
+          ※推定残高＝（月末残高 or 入力残高）＋今月差分（入出金/資金移動/固定費自動反映）＋クレカ引落（支払日到来分）
+        </div>
       </div>
 
       <div class="card">
