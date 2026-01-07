@@ -632,6 +632,7 @@ function setActiveTab(route){
 
 function mount(){
   const view = $("#appView");
+  view.dataset.route = state.route || "home";
   if(state.route==="home") view.innerHTML = renderHome();
   else if(state.route==="money") view.innerHTML = renderMoney();
   else if(state.route==="insurance") view.innerHTML = renderInsurance();
@@ -686,7 +687,7 @@ function renderHome(){
 	      </div>
 	      <div class="sep"></div>
 	      ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
-	        <table class="table">
+	        <table class="table home-soon-table">
 	          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
 	          <tbody>
 	            ${soon.slice(0,8).map(e=>`
@@ -723,8 +724,8 @@ function renderHome(){
       const np = computeNextCardPayment();
       if(!np || !np.total) return "";
       return `
-        <div class="grid cols3 homeNextPay" style="margin-top:12px;">
-          <div class="card homeNextPayCard">
+        <div class="grid cols3 home-nextpay" style="margin-top:12px;">
+          <div class="card home-nextpay-card">
             <div class="h2">次回クレカ支払予定</div>
             <div class="kpi">¥${yen(np.total)}</div>
             <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
@@ -741,7 +742,7 @@ function renderHome(){
         <h2 class="h1">口座合計（入力/差分反映後）</h2>
         <div class="spacer"></div>
         <span class="badge">銀行・現金 ¥${yen(totalBankEst)}</span>
-        <span class="badge" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
+        <span class="badge badge-cc-outstanding" style="margin-left:8px;">クレカ支払予定 ¥${yen(totalCardOutstanding)}</span>
         <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
       </div>
       <div class="small" style="margin-top:10px;opacity:.8;">
@@ -770,7 +771,7 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card homeCardPayCard">
+      <div class="card">
         <div class="row">
           <h2 class="h1">クレカ支払予定</h2>
           <div class="spacer"></div>

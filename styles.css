@@ -248,39 +248,6 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
     min-width: 520px;
   }
 
-  /* =========================
-     iPhone: Home tab (no horizontal scroll inside cards)
-     ========================= */
-  #appView[data-route="home"] .card{
-    overflow-x:hidden;
-  }
-  #appView[data-route="home"] .table{
-    min-width: 0;
-    width: 100%;
-    table-layout: fixed;
-  }
-  #appView[data-route="home"] .table th,
-  #appView[data-route="home"] .table td{
-    padding: 8px 6px;
-    font-size: 12px;
-    line-height: 1.2;
-    overflow:hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* 90日以内の期限: 日付とタイトルのみ（種別列はiPhoneでは非表示） */
-  #appView[data-route="home"] table.homeSoon th:nth-child(3),
-  #appView[data-route="home"] table.homeSoon td:nth-child(3){
-    display:none;
-  }
-
-  /* iPhone Home: クレカ支払予定は非表示 */
-  #appView[data-route="home"] .homeNextPay,
-  #appView[data-route="home"] .homeCardPayCard{
-    display:none;
-  }
-
   .tabs{
     flex-wrap:nowrap;
     overflow:auto;
@@ -386,4 +353,38 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   border-radius:10px;
   padding:6px 10px;
   cursor:pointer;
+}
+
+
+/* =========================
+   iPhone + ホーム限定：詰め表示（横スクロール無効 / クレカ支払予定を非表示 / 期限テーブルは日付+タイトルのみ）
+   ========================= */
+@media (max-width: 640px){
+  #appView[data-route="home"] .card{
+    overflow-x: hidden !important;
+  }
+  #appView[data-route="home"] .table{
+    min-width: 0 !important;
+    table-layout: fixed;
+  }
+  #appView[data-route="home"] .table th,
+  #appView[data-route="home"] .table td{
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 90日以内の期限：日付 + タイトルのみ（種別は隠す） */
+  #appView[data-route="home"] .home-soon-table th:nth-child(3),
+  #appView[data-route="home"] .home-soon-table td:nth-child(3){
+    display:none !important;
+  }
+
+  /* クレカ支払予定：表示を隠す（ホームのみ） */
+  #appView[data-route="home"] .home-nextpay{
+    display:none !important;
+  }
+  #appView[data-route="home"] .badge-cc-outstanding{
+    display:none !important;
+  }
 }
