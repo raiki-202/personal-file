@@ -40,6 +40,7 @@ const state = {
   peoplePersons: [],
   peopleHealthByPersonId: {},
   creditCards: [],
+  prepaidCards: [],
   cars: [],
   homes: [],
   insurances: [],
@@ -124,28 +125,25 @@ async function loadMonthData(month){
 
   const s4 = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
   state.events = s4.docs.map(d=>({id:d.id, ...d.data()}));
-  // people (family) - new schema
-  const sP = await getDocs(query(collection(db, "people_persons"), orderBy("name","asc")));
-  state.peoplePersons = sP.docs.map(d=>({id:d.id, ...d.data()}));
+// people (family) - new schema
+const sP = await getDocs(query(collection(db, "people_persons"), orderBy("name","asc")));
+state.peoplePersons = sP.docs.map(d=>({id:d.id, ...d.data()}));
 
-  const sH = await getDocs(collection(db, "people_health"));
-  const healthMap = {};
-  sH.docs.forEach(d=>{
-    const v = {id:d.id, ...d.data()};
-    const pid = v.person_id || d.id;
-    healthMap[pid] = v;
-  });
-  state.peopleHealthByPersonId = healthMap;
+const sH = await getDocs(collection(db, "people_health"));
+const healthMap = {};
+sH.docs.forEach(d=>{
+  const v = {id:d.id, ...d.data()};
+  const pid = v.person_id || d.id;
+  healthMap[pid] = v;
+});
+state.peopleHealthByPersonId = healthMap;
 
-  // legacy family (fallback / compatibility)
-  const s5 = await getDocs(query(collection(db, "family"), orderBy("name","asc")));
-  const legacyFamily = s5.docs.map(d=>({id:d.id, ...d.data()}));
+// legacy family (fallback / compatibility; some tabs may still reference it)
+const s5 = await getDocs(query(collection(db, "family"), orderBy("name","asc")));
+state.family = s5.docs.map(d=>({id:d.id, ...d.data()}));
 
-  // Prefer new people_persons if exists
-  state.family = legacyFamily; // legacy only; family tab uses people_persons
-
-  // Auto-sync birthdays to events (idempotent). Requires editor/admin.
-  await syncBirthdayEvents();
+// Auto-sync birthdays to events (idempotent). Requires editor/admin.
+await syncBirthdayEvents();
 
 
   const s6 = await getDocs(query(collection(db, "creditCards"), orderBy("cardName","asc")));
@@ -157,6 +155,10 @@ async function loadMonthData(month){
       payableAccountId: payableAccountIdForCardId(d.id)
     };
   });
+
+  const s6b = await getDocs(query(collection(db, "prepaidCards"), orderBy("cardName","asc")));
+  state.prepaidCards = s6b.docs.map(d=>({id:d.id, ...d.data()}));
+
 
   const s7 = await getDocs(query(collection(db, "cars"), orderBy("carName","asc")));
   state.cars = s7.docs.map(d=>({id:d.id, ...d.data()}));
@@ -269,6 +271,14 @@ function getAllAccountsFromMaster(){
   const other = (state.master?.otherAccounts || []).filter(x=>x.active!==false);
   const list = [...banks, ...other];
 
+  // Prepaid cards are treated as accounts (asset)
+  for(const p of (state.prepaidCards||[])){
+    if(!p || !p.id) continue;
+    const id = prepaidAccountIdForCardId(p.id);
+    if(list.some(a=>a.id===id)) continue;
+    list.push({ id, name: p.cardName||p.id, type:"asset", system:false, active:(p.active!==false) });
+  }
+
   // Auto-generated payable accounts per credit card (system)
   // id: ccpay_<cardId>, name: "<cardName>（支払予定）"
   for(const c of (state.creditCards||[])){
@@ -284,6 +294,19 @@ function getAllAccountsFromMaster(){
 
 function payableAccountIdForCardId(cardId){
   return `ccpay_${cardId}`;
+}
+
+function prepaidAccountIdForCardId(cardId){
+  return `pp_${cardId}`;
+}
+
+function prepaidCardName(id){
+  const c = (state.prepaidCards||[]).find(x=>x.id===id);
+  return c?.cardName || id || "-";
+}
+
+function getPrepaidCardById(id){
+  return (state.prepaidCards||[]).find(x=>x.id===id) || null;
 }
 
 function accountName(id){
@@ -401,22 +424,6 @@ function parseDateLikeToMs(v){
   return null;
 }
 
-
-function displayYmd(v){
-  const ms = parseDateLikeToMs(v);
-  return ms ? ymd(ms) : "-";
-}
-function calcAge(v){
-  const ms = parseDateLikeToMs(v);
-  if(!ms) return "-";
-  const b = new Date(ms);
-  const t = new Date();
-  let age = t.getFullYear() - b.getFullYear();
-  const m = t.getMonth() - b.getMonth();
-  if(m < 0 || (m===0 && t.getDate() < b.getDate())) age--;
-  return age>=0 && isFinite(age) ? String(age) : "-";
-}
-
 function paymentDateMsForMonth(card, payMonthKey){
   const [y,m]=payMonthKey.split("-").map(n=>Number(n));
   const pd = Number(card?.paymentDay||27) || 27;
@@ -513,11 +520,18 @@ function entryAccountLabel(e){
   if(e.type==="income") return accountName(e.toAccountId||"-");
   if(e.type==="expense"){
     if(e.paymentMethod==="クレカ" && e.creditCardId) return creditCardName(e.creditCardId);
+    if(e.paymentMethod==="プリペイド" && e.prepaidCardId) return prepaidCardName(e.prepaidCardId);
     return accountName(e.fromAccountId||"-");
   }
   if(e.type==="transfer"){
     const f = accountName(e.fromAccountId||"-");
     const t = accountName(e.toAccountId||"-");
+    return `${f} → ${t}`;
+  }
+  if(e.type==="charge"){
+    const t = e.prepaidCardId ? prepaidCardName(e.prepaidCardId) : accountName(e.toAccountId||"-");
+    if(e.chargeMethod==="クレカ" && e.creditCardId) return `${creditCardName(e.creditCardId)} → ${t}`;
+    const f = accountName(e.fromAccountId||"-");
     return `${f} → ${t}`;
   }
   return "-";
@@ -542,10 +556,23 @@ function accountDeltasFromEntries(){
         }
         if(cardId) from = payableAccountIdForCardId(cardId);
       }
+      // For prepaid expenses, if fromAccountId is not set, attribute to the prepaid account
+      if(!from && e.paymentMethod==="プリペイド" && e.prepaidCardId){
+        from = prepaidAccountIdForCardId(e.prepaidCardId);
+      }
       if(from){ m.set(from, (m.get(from)||0) - amt); }
     }else if(e.type==="transfer"){
       const from = e.fromAccountId;
       const to = e.toAccountId;
+      if(from){ m.set(from, (m.get(from)||0) - amt); }
+      if(to){ m.set(to, (m.get(to)||0) + amt); }
+    }else if(e.type==="charge"){
+      let from = e.fromAccountId;
+      const to = e.toAccountId;
+      // credit-card charge: attribute to payable account
+      if(!from && e.chargeMethod==="クレカ" && e.creditCardId){
+        from = payableAccountIdForCardId(e.creditCardId);
+      }
       if(from){ m.set(from, (m.get(from)||0) - amt); }
       if(to){ m.set(to, (m.get(to)||0) + amt); }
     }
@@ -768,41 +795,63 @@ function renderHome(){
 }
 
 
-function renderFamily(){
-  const persons = (state.peoplePersons || []);
+function calcAge(birth){
+  // birth: "YYYY/MM/DD" or "YYYY-MM-DD"
+  if(!birth) return "";
+  const s = String(birth).trim().replace(/\//g,"-");
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if(!m) return "";
+  const y = +m[1], mo=+m[2], d=+m[3];
+  const today = new Date();
+  let age = today.getFullYear() - y;
+  const mNow = today.getMonth()+1;
+  const dNow = today.getDate();
+  if(mNow < mo || (mNow===mo && dNow < d)) age--;
+  return age>=0 ? String(age) : "";
+}
 
+function renderFamily(){
+  const list = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[]);
   const showInactive = !!state._showInactiveFamily;
-  const rows = persons
-    .filter(p=> showInactive ? true : (p.is_living_with!==false && p.active!==false))
-    .map(p=>{
-      const inactive = (p.active===false) || (p.is_living_with===false);
-      const rel = p.relation || "-";
-      const bdRaw = p.birth_date || p.birthDate || null;
-      const bd = displayYmd(bdRaw);
-      const age = calcAge(bdRaw);
-      const kana = p.name_kana || "-";
-      const phone = p.phone_number || "-";
-      const mail = p.email || "-";
-      const notes = p.notes || p.memo || "";
-      const health = state.peopleHealthByPersonId?.[p.id] || null;
-      const bt = health?.blood_type || "-";
-      const allergy = health?.allergies || "-";
+
+  const relLabel = (v)=>{
+    const map = {self:"本人", spouse:"配偶者", child:"子", other:"その他"};
+    return map[v] || (v||"-");
+  };
+  const genderLabel = (v)=>{
+    const map = {male:"男", female:"女", other:"その他"};
+    return map[v] || (v||"-");
+  };
+
+  const rows = list
+    .filter(x=> showInactive ? true : (x.active!==false))
+    .map(x=>{
+      const bd = (x.birth_date || x.birthDate || "") ? escapeHtml(String(x.birth_date || x.birthDate).replace(/\//g,"-")) : "-";
+      const age = bd!=="-" ? calcAge(bd) : "";
+      const rel = relLabel(x.relation);
+      const kana = x.name_kana || x.kana || "";
+      const phone = x.phone_number || x.phone || "";
+      const email = x.email || "";
+      const blood = state.peopleHealthByPersonId?.[x.id]?.blood_type || "-";
+      const allergy = state.peopleHealthByPersonId?.[x.id]?.allergies || "-";
+      const inactive = (x.active===false);
       return `
         <tr class="${inactive?'dim':''}">
-          <td>${escapeHtml(p.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
+          <td>${escapeHtml(x.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
           <td>${escapeHtml(rel)}</td>
-          <td>${escapeHtml(bd)}</td>
-          <td>${escapeHtml(age)}</td>
-          <td>${escapeHtml(kana)}</td>
-          <td>${escapeHtml(phone)}</td>
-          <td>${escapeHtml(mail)}</td>
-          <td class="muted">${escapeHtml(notes)}</td>
-          <td class="muted">${escapeHtml(bt)}</td>
-          <td class="muted">${escapeHtml(allergy)}</td>
+          <td>${bd}</td>
+          <td>${age?escapeHtml(age):"-"}</td>
+          <td>${escapeHtml(genderLabel(x.gender||""))}</td>
+          <td>${escapeHtml(kana||"-")}</td>
+          <td>${escapeHtml(phone||"-")}</td>
+          <td>${escapeHtml(email||"-")}</td>
+          <td class="muted">${escapeHtml((x.notes||x.memo||"")||"-")}</td>
+          <td>${escapeHtml(blood||"-")}</td>
+          <td>${escapeHtml(allergy||"-")}</td>
           <td class="right">
-            <button class="btn mini" data-edit-person="${p.id}">基本情報</button>
-            <button class="btn mini secondary" data-edit-health="${p.id}">健康</button>
-            <button class="btn mini danger" data-del-person="${p.id}">削除</button>
+            <button class="btn mini" data-edit-person="${x.id}">基本情報</button>
+            <button class="btn mini secondary" data-edit-health="${x.id}">健康</button>
+            <button class="btn mini danger" data-del-person="${x.id}">削除</button>
           </td>
         </tr>
       `;
@@ -829,6 +878,7 @@ function renderFamily(){
               <th>続柄</th>
               <th>誕生日</th>
               <th>年齢</th>
+              <th>性別</th>
               <th>ふりがな</th>
               <th>電話</th>
               <th>メール</th>
@@ -839,22 +889,24 @@ function renderFamily(){
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="11" class="muted">まだありません。</td></tr>`}
+            ${rows || `<tr><td colspan="12" class="muted">まだありません。</td></tr>`}
           </tbody>
         </table>
       </div>
 
       <div class="muted small" style="margin-top:10px;">
         ・基本情報は <code>people_persons</code>、健康情報は <code>people_health</code> に保存します。<br/>
-        ・誕生日などは「定期イベント（90日以内）」に拾えるよう拡張しやすい構造にしています。
+        ・誕生日は「定期イベント」に自動反映します（次回の誕生日日付を登録）。
       </div>
     </div>
   `;
 }
 
+
+
 function renderCar(){
   const list = (state.cars||[]).slice().sort((a,b)=> (a.carName||"").localeCompare(b.carName||""));
-  const owners = (state.peoplePersons&&state.peoplePersons.length?state.peoplePersons:(state.family||[])).filter(f=> (f.is_living_with!==false && f.active!==false));
+  const owners = ((state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[])).filter(f=>f.active!==false);
   const ownerName = (id)=> owners.find(o=>o.id===id)?.name || id || "-";
 
   return `
@@ -958,7 +1010,7 @@ function renderInsurance(){
             </tr>
           </thead>
           <tbody>
-            ${list.length===0 ? `<tr><td colspan="11" class="small">まだありません。</td></tr>` : list.map(x=>{
+            ${list.length===0 ? `<tr><td colspan="10" class="small">まだありません。</td></tr>` : list.map(x=>{
               const cardName = cards.find(c=>c.id===x.paymentCardId)?.cardName || "-";
               return `
                 <tr>
@@ -1149,13 +1201,15 @@ function renderMoney(){
     {key:"accounts", label:"口座管理"},
     {key:"fixed", label:"固定費管理"},
     {key:"cards", label:"クレカ情報"},
+    {key:"prepaid", label:"プリペイド"},
   ];
 
   const body = (
     section==="entries" ? renderMoneyEntries() :
     section==="accounts" ? renderAccounts(true) :
     section==="fixed" ? renderFixed(true) :
-    renderCreditCards()
+    section==="cards" ? renderCreditCards() :
+    renderPrepaidCards()
   );
 
   return `
@@ -1180,6 +1234,7 @@ function renderMoneyEntries(){
     {key:"income", label:"入金"},
     {key:"expense", label:"出金"},
     {key:"transfer", label:"資金移動"},
+    {key:"charge", label:"チャージ"},
   ];
   const active = state._moneyTab || "income";
   const eList = state.entries.filter(e=> e.type===active);
@@ -1197,6 +1252,49 @@ function renderMoneyEntries(){
         ${tabs.map(t=>`<button class="tab ${t.key===active?"active":""}" data-moneytab="${t.key}">${t.label}</button>`).join("")}
 
       </div>
+
+      ${(()=>{
+        const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+        const now = new Date();
+        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+        // NOTE: renderMoneyEntries() のスコープには「visible」が無いので、ここで表示対象カードを確定する
+        const cards = (state.creditCards||[]).filter(c=> (c.active!==false) && (c.status!=="stopped"));
+        const rows = cards.map(c=>{
+          const up = schedule.filter(s=>s.cardId===c.id && s.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs)[0];
+          if(!up) return { cardName:c.cardName||c.id, date:"-", amount:0, payMonth:"-" };
+          return { cardName:c.cardName||c.id, date:new Date(up.payDateMs).toLocaleDateString("ja-JP"), amount:up.amount, payMonth: up.payMonth };
+        });
+        if(!rows.length) return "";
+        const hasAny = rows.some(r=>r.amount!==0);
+        if(!hasAny) return "";
+        return `
+          <div class="sep"></div>
+          <div class="h2">次回支払予定（カード別）</div>
+          <div class="small" style="margin-top:4px;">※締め日・支払日・（必要なら）楽天市場25日締めを反映して自動算出</div>
+          <div style="overflow:auto; margin-top:10px;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>カード</th>
+                  <th class="right">次回支払予定</th>
+                  <th>支払日</th>
+                  <th>対象（支払月）</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(r=>`
+                  <tr>
+                    <td>${escapeHtml(r.cardName)}</td>
+                    <td class="right">${r.amount?`¥${yen(r.amount)}`:"-"}</td>
+                    <td>${escapeHtml(r.date)}</td>
+                    <td>${escapeHtml(r.payMonth)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+      })()}
 
       <div class="sep"></div>
       <table class="table">
@@ -1228,7 +1326,7 @@ function renderMoneyEntries(){
       </table>
       <div class="sep"></div>
       <div class="small">
-        ・入金：入金先銀行 / 出金：出金元銀行 / 資金移動：出金元→出金先 を保存します。<br/>
+        ・入金：入金先 / 出金：出金元 / 資金移動：出金元→出金先 / チャージ：チャージ元→プリペイド を保存します。<br/>
         ・口座管理では、月末残高（手入力）＋ 今月の入出金/移動の差分で「推定残高」を表示します。
       </div>
     </div>
@@ -1588,17 +1686,16 @@ function renderEvents(){
   const suggested = [];
 
   // family birthdays
-  (state.peoplePersons||[]).filter(f=>f.is_living_with!==false).forEach(f=>{
-    const ms = nextBirthdayMs(f.birth_date || f.birthDate || "");
+  (state.family||[]).filter(f=>f.active!==false).forEach(f=>{
+    const ms = nextBirthdayMs(f.birthDate);
     if(ms && withinDays(ms, 90)){
-      const st = "people_persons";
-      const key = `${st}:${f.id}:birthday:${ms}`;
+      const key = `family:${f.id}:birthday:${ms}`;
       if(!exists.has(key)){
         suggested.push({
           title: `${f.name||"家族"} 誕生日`,
           type: "birthday",
           date: ms,
-          sourceType: "people_persons",
+          sourceType: "family",
           sourceId: f.id
         });
       }
@@ -1821,7 +1918,13 @@ function wireViewEvents(){
   // Add entry
   const btnAddEntry = $("#btnAddEntry");
   if(btnAddEntry){
-    btnAddEntry.addEventListener("click", ()=> openEntryModal("add"));
+    btnAddEntry.addEventListener("click", ()=>{
+      // Resolve active money sub-tab from DOM to avoid state desync
+      const activeBtn = document.querySelector('[data-moneytab].active') || document.querySelector('.tab.active[data-moneytab]');
+      const key = activeBtn ? activeBtn.dataset.moneytab : null;
+      if(key) state._moneyTab = key;
+      openEntryModal("add");
+    });
   }
 
   // edit/delete entry
@@ -1904,6 +2007,28 @@ function wireViewEvents(){
     });
   });
 
+
+  // prepaid cards
+  const btnAddPrepaid = $("#btnAddPrepaid");
+  if(btnAddPrepaid){
+    btnAddPrepaid.addEventListener("click", ()=> openPrepaidModal("add"));
+  }
+  $$('[data-edit-prepaid]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.editPrepaid;
+      openPrepaidModal('edit', (state.prepaidCards||[]).find(x=>x.id===id));
+    });
+  });
+  $$('[data-del-prepaid]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(state.role==='viewer'){ alert('viewer は編集できません'); return; }
+      const id = btn.dataset.delPrepaid;
+      if(!confirm('削除しますか？')) return;
+      await deleteDoc(doc(db, 'prepaidCards', id));
+      await reloadAll();
+    });
+  });
+
   // events
   const btnAddEvent = $("#btnAddEvent");
   if(btnAddEvent){
@@ -1931,45 +2056,45 @@ function wireViewEvents(){
   const btnOpenRules = $("#btnOpenRules");
   if(btnOpenRules) btnOpenRules.addEventListener("click", ()=> window.open("./firestore.rules","_blank"));
 
+  // family
   // family (people_persons / people_health)
-  const btnAddPerson = $("#btnAddPerson");
-  if(btnAddPerson){
-    btnAddPerson.addEventListener("click", ()=> openPersonModal("add"));
-  }
-  const toggleFamilyInactive = $("#toggleFamilyInactive");
-  if(toggleFamilyInactive){
-    toggleFamilyInactive.addEventListener("change", ()=>{
-      state._showInactiveFamily = toggleFamilyInactive.checked;
-      mount();
-    });
-  }
-  $$("[data-edit-person]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      const id = btn.dataset.editPerson;
-      const p = (state.peoplePersons||[]).find(x=>x.id===id);
-      openPersonModal("edit", p);
-    });
+const btnAddPerson = $("#btnAddPerson");
+if(btnAddPerson){
+  btnAddPerson.addEventListener("click", ()=> openPersonModal("add"));
+}
+const toggleFamilyInactive = $("#toggleFamilyInactive");
+if(toggleFamilyInactive){
+  toggleFamilyInactive.addEventListener("change", ()=>{
+    state._showInactiveFamily = toggleFamilyInactive.checked;
+    mount();
   });
-  $$("[data-edit-health]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      const id = btn.dataset.editHealth;
-      const p = (state.peoplePersons||[]).find(x=>x.id===id);
-      openHealthModal(p);
-    });
+}
+$$("[data-edit-person]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const id = btn.dataset.editPerson;
+    const p = (state.peoplePersons||[]).find(x=>x.id===id);
+    openPersonModal("edit", p);
   });
-  $$("[data-del-person]").forEach(btn=>{
-    btn.addEventListener("click", async ()=>{
-      if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-      const id = btn.dataset.delPerson;
-      if(!confirm("削除しますか？（健康情報も削除）")) return;
-      // delete both
-      await deleteDoc(doc(db, "people_persons", id)).catch(()=>{});
-      await deleteDoc(doc(db, "people_health", id)).catch(()=>{});
-      await reloadAll();
-    });
+});
+$$("[data-edit-health]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const id = btn.dataset.editHealth;
+    const p = (state.peoplePersons||[]).find(x=>x.id===id);
+    openHealthModal(p);
   });
+});
+$$("[data-del-person]").forEach(btn=>{
+  btn.addEventListener("click", async ()=>{
+    if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+    const id = btn.dataset.delPerson;
+    if(!confirm("削除しますか？（健康情報も削除）")) return;
+    await deleteDoc(doc(db, "people_persons", id)).catch(()=>{});
+    await deleteDoc(doc(db, "people_health", id)).catch(()=>{});
+    await reloadAll();
+  });
+});
 
-  // insurance
+// insurance
   const btnAddInsurance = $("#btnAddInsurance");
   if(btnAddInsurance){
     btnAddInsurance.addEventListener("click", ()=> openInsuranceModal("add"));
@@ -2112,10 +2237,9 @@ function showModal(title, html){
   $("#modalOverlay").setAttribute("aria-hidden","false");
 }
 
-// alias (older patches used openModal name)
-function openModal(title, html){
-  return showModal(title, html);
-}
+// alias for compatibility
+const openModal = showModal;
+const closeModal = hideModal;
 
 function hideModal(){
   $("#modalOverlay").style.display = "none";
@@ -2133,8 +2257,8 @@ $("#modalOverlay").addEventListener("click", (e)=>{
 
 function openEntryModal(mode, entry=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const type = state._moneyTab || "income";
-  const cats = type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories);
+  const type = (entry && entry.type) ? entry.type : (state._moneyTab || "income");
+  const cats = (type==="charge") ? [] : (type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories));
   // In entry forms, hide system-generated payable accounts (they are chosen automatically when paymentMethod is クレカ)
   const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
   const opts = (selectedId)=> accounts.map(a=>`<option value="${escapeHtml(a.id)}" ${a.id===selectedId?"selected":""}>${escapeHtml(a.name)}</option>`).join("");
@@ -2162,6 +2286,10 @@ function openEntryModal(mode, entry=null){
       const cardSel = entry?.creditCardId || (state.creditCards?.[0]?.id||"");
       const cardOpts = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped")
         .map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===cardSel?"selected":""}>${escapeHtml(c.cardName||c.id)}</option>`).join("");
+      const ppSel = entry?.prepaidCardId || (state.prepaidCards?.[0]?.id||"");
+      const ppOpts = (state.prepaidCards||[]).filter(p=>p.active!==false)
+        .map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===ppSel?"selected":""}>${escapeHtml(p.cardName||p.id)}</option>`).join("");
+
       return `
         <div>
           <div class="small">支払い方法</div>
@@ -2175,6 +2303,11 @@ function openEntryModal(mode, entry=null){
           <select id="m_fromAccount" class="input">${opts(sel)}</select>
         </div>
 
+        <div id="m_prepaidWrap" style="display:none;">
+          <div class="small">プリペイド</div>
+          <select id="m_prepaid" class="input">${ppOpts}</select>
+        </div>
+
         <div id="m_cardWrap" style="display:none;">
           <div class="small">クレカ</div>
           <select id="m_card" class="input">${cardOpts}</select>
@@ -2186,6 +2319,43 @@ function openEntryModal(mode, entry=null){
         </div>
       `;
     }
+
+    if(type==="charge"){
+      const payMethods = (state.master.paymentMethods||["現金","振込","口座引落","クレカ"]);
+      const methodSel = entry?.chargeMethod || entry?.paymentMethod || payMethods[0] || "現金";
+      const fromSel = entry?.fromAccountId || accounts[0]?.id || "";
+      const cardSel = entry?.creditCardId || (state.creditCards?.[0]?.id||"");
+      const toP = entry?.prepaidCardId || (state.prepaidCards?.[0]?.id||"");
+      const cardOpts = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped")
+        .map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===cardSel?"selected":""}>${escapeHtml(c.cardName||c.id)}</option>`).join("");
+      const ppOpts = (state.prepaidCards||[]).filter(p=>p.active!==false)
+        .map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===toP?"selected":""}>${escapeHtml(p.cardName||p.id)}</option>`).join("");
+
+      return `
+        <div>
+          <div class="small">チャージ方法</div>
+          <select id="m_payMethod" class="input">
+            ${payMethods.map(p=>`<option ${p===methodSel?"selected":""}>${escapeHtml(p)}</option>`).join("")}
+          </select>
+        </div>
+
+        <div id="m_fromWrap">
+          <div class="small">チャージ元</div>
+          <select id="m_fromAccount" class="input">${opts(fromSel)}</select>
+        </div>
+
+        <div id="m_cardWrap" style="display:none;">
+          <div class="small">クレカ</div>
+          <select id="m_card" class="input">${cardOpts}</select>
+        </div>
+
+        <div>
+          <div class="small">チャージ先（プリペイド）</div>
+          <select id="m_toPrepaid" class="input">${ppOpts}</select>
+        </div>
+      `;
+    }
+
     // transfer
     const selF = entry?.fromAccountId || accounts[0]?.id || "";
     const selT = entry?.toAccountId || accounts[1]?.id || accounts[0]?.id || "";
@@ -2203,7 +2373,7 @@ function openEntryModal(mode, entry=null){
 
   showModal(mode==="add" ? "入力を追加" : "入力を編集", `
     <div class="formGrid">
-      <div>
+      <div style="display:${type==="charge" ? "none" : ""};">
         <div class="small">カテゴリ</div>
         <select id="m_category" class="input">
           ${cats.map(c=>`<option ${c===(entry?.category||cats[0])?"selected":""}>${escapeHtml(c)}</option>`).join("")}
@@ -2233,11 +2403,31 @@ function openEntryModal(mode, entry=null){
   
   // expense: toggle payment UI
   const syncPayUi = ()=>{
-    if(type!=="expense") return;
+    if(type!=="expense" && type!=="charge") return;
     const pm = $("#m_payMethod") ? $("#m_payMethod").value : "";
     const isCard = (pm==="クレカ");
+    const isPrepaid = (pm==="プリペイド");
     if($("#m_cardWrap")) $("#m_cardWrap").style.display = isCard ? "" : "none";
-    if($("#m_fromWrap")) $("#m_fromWrap").style.display = isCard ? "none" : "";
+    if($("#m_prepaidWrap")) $("#m_prepaidWrap").style.display = isPrepaid ? "" : "none";
+    if($("#m_fromWrap")) {
+      const wrap = $("#m_fromWrap");
+      const sel = $("#m_fromAccount");
+      const cashId = state.master?.cashAccountId || "cash";
+      wrap.style.display = (isCard || isPrepaid) ? "none" : "";
+      if(type==="charge" && sel){
+        // For cash charge: show "----" (no charge-from selection), but internally treat it as cash account.
+        if(!sel.dataset.orig) sel.dataset.orig = sel.innerHTML;
+        if(pm==="現金"){
+          sel.innerHTML = `<option value="${cashId}">----</option>`;
+          sel.value = cashId;
+          sel.disabled = true;
+        }else{
+          // restore original options
+          if(sel.dataset.orig) sel.innerHTML = sel.dataset.orig;
+          sel.disabled = false;
+        }
+      }
+    }
   };
   if($("#m_payMethod")) $("#m_payMethod").addEventListener("change", syncPayUi);
   syncPayUi();
@@ -2253,24 +2443,53 @@ $("#m_save").addEventListener("click", async ()=>{
     const toAccountId = $("#m_toAccount") ? $("#m_toAccount").value : null;
     const paymentMethod = $("#m_payMethod") ? $("#m_payMethod").value : null;
     const creditCardId = $("#m_card") ? $("#m_card").value : null;
+    const prepaidCardId = $("#m_prepaid") ? $("#m_prepaid").value : null;
     const creditChannel = $("#m_cardChannel") ? $("#m_cardChannel").value : null;
 
-    // expense: when クレカ, post to payable (支払予定) account instead of bank
+    // Effective accounts (system rules)
     let effectiveFrom = fromAccountId;
+    let effectiveTo = toAccountId;
     let effectiveCardId = null;
+    let effectivePrepaidId = prepaidCardId || null;
+
     if(type==="expense" && paymentMethod==="クレカ"){
       effectiveCardId = creditCardId || null;
       // Always post to this card's payable account (auto-generated)
       effectiveFrom = effectiveCardId ? payableAccountIdForCardId(effectiveCardId) : null;
     }
 
+    if(type==="expense" && paymentMethod==="プリペイド"){
+      // Expense paid by prepaid: subtract from prepaid balance
+      effectiveFrom = effectivePrepaidId ? prepaidAccountIdForCardId(effectivePrepaidId) : null;
+    }
+
+    if(type==="charge"){
+      // Charge: from source -> prepaid
+      const chMethod = paymentMethod || "現金";
+      const toP = $("#m_toPrepaid") ? $("#m_toPrepaid").value : (effectivePrepaidId||"");
+      effectivePrepaidId = toP || null;
+      effectiveTo = effectivePrepaidId ? prepaidAccountIdForCardId(effectivePrepaidId) : null;
+
+      if(chMethod==="クレカ"){
+        effectiveCardId = creditCardId || null;
+        effectiveFrom = effectiveCardId ? payableAccountIdForCardId(effectiveCardId) : null;
+      }else{
+        effectiveCardId = null;
+        effectiveFrom = fromAccountId || null;
+      }
+    }
+
     const payload = {
-      type, category, amount, note, occurredAt,
+      type,
+      category: (type==="charge") ? "チャージ" : (category||""),
+      amount, note, occurredAt,
       paymentMethod: paymentMethod || null,
+      chargeMethod: (type==="charge") ? (paymentMethod||null) : null,
       creditCardId: effectiveCardId,
+      prepaidCardId: (type==="expense" && paymentMethod==="プリペイド") ? (effectivePrepaidId||null) : ((type==="charge") ? (effectivePrepaidId||null) : null),
       creditChannel: (paymentMethod==="クレカ") ? (creditChannel||null) : null,
       fromAccountId: effectiveFrom || null,
-      toAccountId: toAccountId || null,
+      toAccountId: effectiveTo || null,
       updatedAt: Date.now()
     };
 
@@ -2504,6 +2723,115 @@ function openFixedModal(mode, item=null){
       await addDoc(collection(db, "fixedCosts"), payload);
     }else{
       await updateDoc(doc(db, "fixedCosts", item.id), payload);
+    }
+    hideModal();
+    await reloadAll();
+  }, { once:true });
+}
+
+
+function renderPrepaidCards(){
+  const list = (state.prepaidCards||[]).slice().sort((a,b)=> (a.cardName||"").localeCompare(b.cardName||""));
+  const visible = list.filter(x=>x.active!==false);
+
+  const mb = mergedBalances();
+  const deltas = accountDeltasFromEntries();
+  const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
+  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+  const balOf = (accId)=> Number((mb.find(x=>x.id===accId)?.balance)||0);
+  const estOf = (accId)=> balOf(accId) + deltaOf(accId);
+
+  return `
+    <div class="card">
+      <div class="row">
+        <h2 class="h1">プリペイドカード</h2>
+        <div class="spacer"></div>
+        <button class="btn" id="btnAddPrepaid">＋追加</button>
+      </div>
+      <div class="sep"></div>
+
+      <div style="overflow:auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>カード名</th>
+              <th class="right">月末残高</th>
+              <th class="right">今月差分</th>
+              <th class="right">推定残高</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${visible.length===0 ? `<tr><td colspan="5" class="small">まだありません。</td></tr>` : visible.map(p=>{
+              const accId = prepaidAccountIdForCardId(p.id);
+              const b = balOf(accId);
+              const d = deltaOf(accId);
+              const e = estOf(accId);
+              return `
+                <tr>
+                  <td>${escapeHtml(p.cardName||p.id)}</td>
+                  <td class="right">¥${yen(b)}</td>
+                  <td class="right">¥${yen(d)}</td>
+                  <td class="right">¥${yen(e)}</td>
+                  <td class="right">
+                    <button class="btn secondary" data-edit-prepaid="${escapeHtml(p.id)}">編集</button>
+                    <button class="btn danger" data-del-prepaid="${escapeHtml(p.id)}">削除</button>
+                  </td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sep"></div>
+      <div class="small">
+        ・プリペイドは「口座」と同じ扱いで、月末残高は「口座管理 ＞ 残高入力」でも更新できます。<br/>
+        ・出金で「プリペイド」を選ぶと残高から減算されます。チャージは「入出金 ＞ チャージ」で入力します。
+      </div>
+    </div>
+  `;
+}
+
+function openPrepaidModal(mode, card=null){
+  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+
+  const c = card || {};
+  showModal(mode==="add" ? "プリペイドカードを追加" : "プリペイドカードを編集", `
+    <div class="formGrid">
+      <div>
+        <div class="small">カード名</div>
+        <input id="pp_name" class="input" value="${escapeHtml(c.cardName||"")}" placeholder="例：TOICA / WAON / Suica など" />
+      </div>
+      <div>
+        <div class="small">有効</div>
+        <select id="pp_active" class="input">
+          <option value="true" ${c.active!==false ? "selected":""}>有効</option>
+          <option value="false" ${c.active===false ? "selected":""}>停止</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="btn" id="pp_save">保存</button>
+      <div class="spacer"></div>
+      <span class="small">${mode==="add" ? "" : `id: ${escapeHtml(c.id||"")}`}</span>
+    </div>
+  `);
+
+  $("#pp_save").addEventListener("click", async ()=>{
+    const cardName = $("#pp_name").value.trim();
+    const active = $("#pp_active").value === "true";
+    if(!cardName){ alert("カード名を入力してください"); return; }
+
+    const payload = { cardName, active, updatedAt: Date.now() };
+
+    if(mode==="add"){
+      payload.createdAt = Date.now();
+      payload.createdBy = state.user.uid;
+      await addDoc(collection(db, "prepaidCards"), payload);
+    }else{
+      await updateDoc(doc(db, "prepaidCards", c.id), payload);
     }
     hideModal();
     await reloadAll();
@@ -2768,7 +3096,7 @@ function openInsuranceModal(mode, item=null){
 
 function openCarModal(mode, item=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const owners = (state.peoplePersons&&state.peoplePersons.length?state.peoplePersons:(state.family||[])).filter(f=> (f.is_living_with!==false && f.active!==false));
+  const owners = ((state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[])).filter(f=>f.active!==false);
   showModal(mode==="add" ? "車を追加" : "車を編集", `
     <div class="formGrid">
       <div>
@@ -3239,6 +3567,8 @@ function openFamilyModal(mode, item=null){
 }
 
 
+
+
 /** =========================
  *  People (Family) - new schema
  * ========================= */
@@ -3452,6 +3782,61 @@ function openHealthModal(person){
 }
 
 
+
+
+async function syncBirthdayEvents(){
+  // viewer cannot write; also avoid failing the whole load on permission errors
+  if(state.role==="viewer") return;
+  const persons = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : [];
+  if(persons.length===0) return;
+
+  // parse YYYY-MM-DD
+  function parseYmd(s){
+    if(!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+    if(m) return {y:+m[1], mo:+m[2], d:+m[3]};
+    return null;
+  }
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  function nextBirthdayMs(birth){
+    const p = parseYmd(birth);
+    if(!p) return null;
+    const now = new Date();
+    let y = now.getFullYear();
+    let dt = new Date(y, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    if(dt < today0.getTime()) dt = new Date(y+1, p.mo-1, p.d, 12, 0, 0, 0).getTime();
+    return dt;
+  }
+
+  let changed = false;
+  for(const p of persons){
+    if(p.active===false) continue;
+    const b = p.birth_date || p.birthDate || "";
+    const ms = nextBirthdayMs(b);
+    if(!ms) continue;
+    try{
+      await upsertEventBySource({
+        sourceType: "people_persons",
+        sourceId: p.id,
+        type: "birthday",
+        title: `${p.name||"家族"} 誕生日`,
+        date: ms
+      });
+      changed = true;
+    }catch(e){
+      // permissions or missing index should not break app
+      console.warn("[syncBirthdayEvents] skipped:", e.message);
+    }
+  }
+
+  if(changed){
+    const s4b = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
+    state.events = s4b.docs.map(d=>({id:d.id, ...d.data()}));
+  }
+}
+
+
+
 /** =========================
  *  8) Routing + App Lifecycle
  * ========================= */
@@ -3556,57 +3941,4 @@ onAuthStateChanged(auth, async (user)=>{
     console.error(e);
     alert(`読み込みエラー: ${e.message}`);
   }
-})
-
-async function syncBirthdayEvents(){
-  // viewer cannot write; also avoid failing the whole load on permission errors
-  if(state.role==="viewer") return;
-  const persons = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : [];
-  if(persons.length===0) return;
-
-  // parse YYYY-MM-DD
-  function parseYmd(s){
-    if(!s) return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
-    if(m) return {y:+m[1], mo:+m[2], d:+m[3]};
-    return null;
-  }
-  const today0 = new Date(); today0.setHours(0,0,0,0);
-  function nextBirthdayMs(birth){
-    const p = parseYmd(birth);
-    if(!p) return null;
-    const now = new Date();
-    let y = now.getFullYear();
-    let dt = new Date(y, p.mo-1, p.d, 12, 0, 0, 0).getTime();
-    if(dt < today0.getTime()) dt = new Date(y+1, p.mo-1, p.d, 12, 0, 0, 0).getTime();
-    return dt;
-  }
-
-  let changed = false;
-  for(const p of persons){
-    if(p.active===false) continue;
-    const b = p.birth_date || p.birthDate || "";
-    const ms = nextBirthdayMs(b);
-    if(!ms) continue;
-    try{
-      await upsertEventBySource({
-        sourceType: "people_persons",
-        sourceId: p.id,
-        type: "birthday",
-        title: `${p.name||"家族"} 誕生日`,
-        date: ms
-      });
-      changed = true;
-    }catch(e){
-      // permissions or missing index should not break app
-      console.warn("[syncBirthdayEvents] skipped:", e.message);
-    }
-  }
-
-  if(changed){
-    const s4b = await getDocs(query(collection(db, "events"), orderBy("date","asc")));
-    state.events = s4b.docs.map(d=>({id:d.id, ...d.data()}));
-  }
-}
-
-;
+});
