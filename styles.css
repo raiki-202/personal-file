@@ -260,6 +260,41 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   .modalBackdrop{align-items:flex-end}
   .modal{border-radius: 18px 18px 0 0; max-height: 92vh}
   .table th,.table td{font-size:12px; padding:10px 8px}
+
+
+  /* ===== iPhone + HOME only: no horizontal scroll, compact tables, hide CC payment blocks ===== */
+  #appView[data-route="home"] .card{
+    overflow-x:hidden;
+  }
+  #appView[data-route="home"] .table{
+    min-width: 0;
+    width:100%;
+    table-layout: fixed;
+  }
+  #appView[data-route="home"] .table th,
+  #appView[data-route="home"] .table td{
+    padding:8px 6px;
+    font-size:12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 90日以内：日付＋タイトルのみ（種別列を隠す） */
+  #appView[data-route="home"] .home-soon .table thead th:nth-child(3),
+  #appView[data-route="home"] .home-soon .table tbody td:nth-child(3){
+    display:none;
+  }
+  #appView[data-route="home"] .home-soon .table thead th:nth-child(1){ width: 38%; }
+  #appView[data-route="home"] .home-soon .table thead th:nth-child(2){ width: 62%; }
+
+  /* クレカ支払予定：iPhoneホームでは非表示 */
+  #appView[data-route="home"] .home-cc-next,
+  #appView[data-route="home"] .home-cc,
+  #appView[data-route="home"] .home-cc-badge{
+    display:none !important;
+  }
+
 }
 
 /* reduce motion preference */
@@ -353,38 +388,4 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   border-radius:10px;
   padding:6px 10px;
   cursor:pointer;
-}
-
-
-/* =========================
-   iPhone + ホーム限定：詰め表示（横スクロール無効 / クレカ支払予定を非表示 / 期限テーブルは日付+タイトルのみ）
-   ========================= */
-@media (max-width: 640px){
-  #appView[data-route="home"] .card{
-    overflow-x: hidden !important;
-  }
-  #appView[data-route="home"] .table{
-    min-width: 0 !important;
-    table-layout: fixed;
-  }
-  #appView[data-route="home"] .table th,
-  #appView[data-route="home"] .table td{
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* 90日以内の期限：日付 + タイトルのみ（種別は隠す） */
-  #appView[data-route="home"] .home-soon-table th:nth-child(3),
-  #appView[data-route="home"] .home-soon-table td:nth-child(3){
-    display:none !important;
-  }
-
-  /* クレカ支払予定：表示を隠す（ホームのみ） */
-  #appView[data-route="home"] .home-nextpay{
-    display:none !important;
-  }
-  #appView[data-route="home"] .badge-cc-outstanding{
-    display:none !important;
-  }
 }
