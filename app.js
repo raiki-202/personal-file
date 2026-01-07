@@ -1857,42 +1857,7 @@ function openEntryModal(mode, entry=null){
         <div class="small">日付</div>
         <input id="m_date" class="input" type="date" value="${dateStr}" />
       </div>
-      
       <div>
-        <div class="small">締め日</div>
-        <select id="c_close" class="input">
-          <option value="EOM">末日</option>
-          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
-        </select>
-      </div>
-      <div>
-        <div class="small">支払日</div>
-        <div>
-        <div class="small">支払タイミング</div>
-        <select id="c_paymo" class="input">
-          <option value="1">翌月</option>
-          <option value="2">翌々月</option>
-        </select>
-        <div class="small" style="margin-top:8px;">支払日</div>
-        <select id="c_payday" class="input">
-          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}">${d}日</option>`).join("")}
-        </select>
-      </div>
-      <</div>
-      <div>
-        <div class="small">支払口座</div>
-        <select id="c_payacc" class="input">
-          ${(state.master.banks||[]).filter(x=>x.active!==false).map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("")}
-        </select>
-      </div>
-      <div>
-        <div class="small">支払予定口座</div>
-        <select id="c_payable" class="input">
-          ${(state.master.otherAccounts||[]).filter(x=>x.active!==false).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join("")}
-        </select>
-      </div>
-
-<div>
         <div class="small">メモ</div>
         <input id="m_note" class="input" value="${escapeHtml(entry?.note||"")}" />
       </div>
