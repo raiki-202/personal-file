@@ -641,10 +641,6 @@ function mount(){
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
   else view.innerHTML = renderHome();
-
-  // for responsive / route-specific CSS (e.g. iPhone home compact view)
-  view.dataset.route = state.route || "home";
-
   wireViewEvents();
 }
 
@@ -690,7 +686,7 @@ function renderHome(){
 	      </div>
 	      <div class="sep"></div>
 	      ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
-	        <table class="table homeSoon">
+	        <table class="table">
 	          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
 	          <tbody>
 	            ${soon.slice(0,8).map(e=>`
@@ -727,8 +723,8 @@ function renderHome(){
       const np = computeNextCardPayment();
       if(!np || !np.total) return "";
       return `
-        <div class="grid cols3" style="margin-top:12px;">
-          <div class="card">
+        <div class="grid cols3 homeNextPay" style="margin-top:12px;">
+          <div class="card homeNextPayCard">
             <div class="h2">次回クレカ支払予定</div>
             <div class="kpi">¥${yen(np.total)}</div>
             <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
@@ -761,7 +757,7 @@ function renderHome(){
           <span class="badge">合計 ¥${yen(totalBankEst)}</span>
         </div>
         <div class="sep"></div>
-	        <table class="table homeBank">
+        <table class="table">
           <thead><tr><th>口座</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${bankRows.map(r=>`
@@ -774,14 +770,14 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card">
+      <div class="card homeCardPayCard">
         <div class="row">
           <h2 class="h1">クレカ支払予定</h2>
           <div class="spacer"></div>
           <span class="badge">合計 ¥${yen(totalCardOutstanding)}</span>
         </div>
         <div class="sep"></div>
-	        <table class="table homeCardPay">
+        <table class="table">
           <thead><tr><th>カード</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${payableRows.map(r=>`

@@ -249,11 +249,10 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   }
 
   /* =========================
-     iPhone: Home tab (no table scroll)
-     - compact tables so they fit in the card without horizontal scroll
+     iPhone: Home tab (no horizontal scroll inside cards)
      ========================= */
   #appView[data-route="home"] .card{
-    overflow-x: visible;
+    overflow-x:hidden;
   }
   #appView[data-route="home"] .table{
     min-width: 0;
@@ -265,15 +264,20 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
     padding: 8px 6px;
     font-size: 12px;
     line-height: 1.2;
-  }
-  #appView[data-route="home"] .table td{
-    word-break: break-word;
-    overflow-wrap: anywhere;
+    overflow:hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* 90日以内の期限: 種別列はiPhoneでは非表示（詰めてカード内に収める） */
+  /* 90日以内の期限: 日付とタイトルのみ（種別列はiPhoneでは非表示） */
   #appView[data-route="home"] table.homeSoon th:nth-child(3),
   #appView[data-route="home"] table.homeSoon td:nth-child(3){
+    display:none;
+  }
+
+  /* iPhone Home: クレカ支払予定は非表示 */
+  #appView[data-route="home"] .homeNextPay,
+  #appView[data-route="home"] .homeCardPayCard{
     display:none;
   }
 
