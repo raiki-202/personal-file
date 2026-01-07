@@ -107,12 +107,6 @@
       "id": "cash",
       "name": "現金",
       "active": true
-    },
-    {
-      "id": "rakuten_card_payable",
-      "name": "楽天カード（支払予定）",
-      "active": true,
-      "type": "liability"
     }
   ],
   "paymentMethods": [
