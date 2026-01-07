@@ -1852,7 +1852,13 @@ function wireViewEvents(){
   // Add entry
   const btnAddEntry = $("#btnAddEntry");
   if(btnAddEntry){
-    btnAddEntry.addEventListener("click", ()=> openEntryModal("add"));
+    btnAddEntry.addEventListener("click", ()=>{
+      // Resolve active money sub-tab from DOM to avoid state desync
+      const activeBtn = document.querySelector('[data-moneytab].active') || document.querySelector('.tab.active[data-moneytab]');
+      const key = activeBtn ? activeBtn.dataset.moneytab : null;
+      if(key) state._moneyTab = key;
+      openEntryModal("add");
+    });
   }
 
   // edit/delete entry
@@ -2170,7 +2176,7 @@ $("#modalOverlay").addEventListener("click", (e)=>{
 
 function openEntryModal(mode, entry=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const type = state._moneyTab || "income";
+  const type = (entry && entry.type) ? entry.type : (state._moneyTab || "income");
   const cats = (type==="charge") ? [] : (type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories));
   // In entry forms, hide system-generated payable accounts (they are chosen automatically when paymentMethod is クレカ)
   const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
@@ -2322,7 +2328,25 @@ function openEntryModal(mode, entry=null){
     const isPrepaid = (pm==="プリペイド");
     if($("#m_cardWrap")) $("#m_cardWrap").style.display = isCard ? "" : "none";
     if($("#m_prepaidWrap")) $("#m_prepaidWrap").style.display = isPrepaid ? "" : "none";
-    if($("#m_fromWrap")) $("#m_fromWrap").style.display = (isCard || isPrepaid) ? "none" : "";
+    if($("#m_fromWrap")) {
+      const wrap = $("#m_fromWrap");
+      const sel = $("#m_fromAccount");
+      const cashId = state.master?.cashAccountId || "cash";
+      wrap.style.display = (isCard || isPrepaid) ? "none" : "";
+      if(type==="charge" && sel){
+        // For cash charge: show "----" (no charge-from selection), but internally treat it as cash account.
+        if(!sel.dataset.orig) sel.dataset.orig = sel.innerHTML;
+        if(pm==="現金"){
+          sel.innerHTML = `<option value="${cashId}">----</option>`;
+          sel.value = cashId;
+          sel.disabled = true;
+        }else{
+          // restore original options
+          if(sel.dataset.orig) sel.innerHTML = sel.dataset.orig;
+          sel.disabled = false;
+        }
+      }
+    }
   };
   if($("#m_payMethod")) $("#m_payMethod").addEventListener("change", syncPayUi);
   syncPayUi();
