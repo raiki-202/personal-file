@@ -136,10 +136,6 @@ async function loadMonthData(month){
     };
   });
 
-  const s6b = await getDocs(query(collection(db, "prepaidCards"), orderBy("cardName","asc")));
-  state.prepaidCards = s6b.docs.map(d=>({id:d.id, ...d.data()}));
-
-
   const s7 = await getDocs(query(collection(db, "cars"), orderBy("carName","asc")));
   state.cars = s7.docs.map(d=>({id:d.id, ...d.data()}));
 
@@ -251,14 +247,6 @@ function getAllAccountsFromMaster(){
   const other = (state.master?.otherAccounts || []).filter(x=>x.active!==false);
   const list = [...banks, ...other];
 
-  // Prepaid cards are treated as accounts (asset)
-  for(const p of (state.prepaidCards||[])){
-    if(!p || !p.id) continue;
-    const id = prepaidAccountIdForCardId(p.id);
-    if(list.some(a=>a.id===id)) continue;
-    list.push({ id, name: p.cardName||p.id, type:"asset", system:false, active:(p.active!==false) });
-  }
-
   // Auto-generated payable accounts per credit card (system)
   // id: ccpay_<cardId>, name: "<cardName>（支払予定）"
   for(const c of (state.creditCards||[])){
@@ -274,19 +262,6 @@ function getAllAccountsFromMaster(){
 
 function payableAccountIdForCardId(cardId){
   return `ccpay_${cardId}`;
-}
-
-function prepaidAccountIdForCardId(cardId){
-  return `pp_${cardId}`;
-}
-
-function prepaidCardName(id){
-  const c = (state.prepaidCards||[]).find(x=>x.id===id);
-  return c?.cardName || id || "-";
-}
-
-function getPrepaidCardById(id){
-  return (state.prepaidCards||[]).find(x=>x.id===id) || null;
 }
 
 function accountName(id){
@@ -500,18 +475,11 @@ function entryAccountLabel(e){
   if(e.type==="income") return accountName(e.toAccountId||"-");
   if(e.type==="expense"){
     if(e.paymentMethod==="クレカ" && e.creditCardId) return creditCardName(e.creditCardId);
-    if(e.paymentMethod==="プリペイド" && e.prepaidCardId) return prepaidCardName(e.prepaidCardId);
     return accountName(e.fromAccountId||"-");
   }
   if(e.type==="transfer"){
     const f = accountName(e.fromAccountId||"-");
     const t = accountName(e.toAccountId||"-");
-    return `${f} → ${t}`;
-  }
-  if(e.type==="charge"){
-    const t = e.prepaidCardId ? prepaidCardName(e.prepaidCardId) : accountName(e.toAccountId||"-");
-    if(e.chargeMethod==="クレカ" && e.creditCardId) return `${creditCardName(e.creditCardId)} → ${t}`;
-    const f = accountName(e.fromAccountId||"-");
     return `${f} → ${t}`;
   }
   return "-";
@@ -536,23 +504,10 @@ function accountDeltasFromEntries(){
         }
         if(cardId) from = payableAccountIdForCardId(cardId);
       }
-      // For prepaid expenses, if fromAccountId is not set, attribute to the prepaid account
-      if(!from && e.paymentMethod==="プリペイド" && e.prepaidCardId){
-        from = prepaidAccountIdForCardId(e.prepaidCardId);
-      }
       if(from){ m.set(from, (m.get(from)||0) - amt); }
     }else if(e.type==="transfer"){
       const from = e.fromAccountId;
       const to = e.toAccountId;
-      if(from){ m.set(from, (m.get(from)||0) - amt); }
-      if(to){ m.set(to, (m.get(to)||0) + amt); }
-    }else if(e.type==="charge"){
-      let from = e.fromAccountId;
-      const to = e.toAccountId;
-      // credit-card charge: attribute to payable account
-      if(!from && e.chargeMethod==="クレカ" && e.creditCardId){
-        from = payableAccountIdForCardId(e.creditCardId);
-      }
       if(from){ m.set(from, (m.get(from)||0) - amt); }
       if(to){ m.set(to, (m.get(to)||0) + amt); }
     }
@@ -1135,15 +1090,13 @@ function renderMoney(){
     {key:"accounts", label:"口座管理"},
     {key:"fixed", label:"固定費管理"},
     {key:"cards", label:"クレカ情報"},
-    {key:"prepaid", label:"プリペイド"},
   ];
 
   const body = (
     section==="entries" ? renderMoneyEntries() :
     section==="accounts" ? renderAccounts(true) :
     section==="fixed" ? renderFixed(true) :
-    section==="cards" ? renderCreditCards() :
-    renderPrepaidCards()
+    renderCreditCards()
   );
 
   return `
@@ -1168,7 +1121,6 @@ function renderMoneyEntries(){
     {key:"income", label:"入金"},
     {key:"expense", label:"出金"},
     {key:"transfer", label:"資金移動"},
-    {key:"charge", label:"チャージ"},
   ];
   const active = state._moneyTab || "income";
   const eList = state.entries.filter(e=> e.type===active);
@@ -1186,49 +1138,6 @@ function renderMoneyEntries(){
         ${tabs.map(t=>`<button class="tab ${t.key===active?"active":""}" data-moneytab="${t.key}">${t.label}</button>`).join("")}
 
       </div>
-
-      ${(()=>{
-        const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-        const now = new Date();
-        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
-        // NOTE: renderMoneyEntries() のスコープには「visible」が無いので、ここで表示対象カードを確定する
-        const cards = (state.creditCards||[]).filter(c=> (c.active!==false) && (c.status!=="stopped"));
-        const rows = cards.map(c=>{
-          const up = schedule.filter(s=>s.cardId===c.id && s.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs)[0];
-          if(!up) return { cardName:c.cardName||c.id, date:"-", amount:0, payMonth:"-" };
-          return { cardName:c.cardName||c.id, date:new Date(up.payDateMs).toLocaleDateString("ja-JP"), amount:up.amount, payMonth: up.payMonth };
-        });
-        if(!rows.length) return "";
-        const hasAny = rows.some(r=>r.amount!==0);
-        if(!hasAny) return "";
-        return `
-          <div class="sep"></div>
-          <div class="h2">次回支払予定（カード別）</div>
-          <div class="small" style="margin-top:4px;">※締め日・支払日・（必要なら）楽天市場25日締めを反映して自動算出</div>
-          <div style="overflow:auto; margin-top:10px;">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>カード</th>
-                  <th class="right">次回支払予定</th>
-                  <th>支払日</th>
-                  <th>対象（支払月）</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map(r=>`
-                  <tr>
-                    <td>${escapeHtml(r.cardName)}</td>
-                    <td class="right">${r.amount?`¥${yen(r.amount)}`:"-"}</td>
-                    <td>${escapeHtml(r.date)}</td>
-                    <td>${escapeHtml(r.payMonth)}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
-        `;
-      })()}
 
       <div class="sep"></div>
       <table class="table">
@@ -1260,7 +1169,7 @@ function renderMoneyEntries(){
       </table>
       <div class="sep"></div>
       <div class="small">
-        ・入金：入金先 / 出金：出金元 / 資金移動：出金元→出金先 / チャージ：チャージ元→プリペイド を保存します。<br/>
+        ・入金：入金先銀行 / 出金：出金元銀行 / 資金移動：出金元→出金先 を保存します。<br/>
         ・口座管理では、月末残高（手入力）＋ 今月の入出金/移動の差分で「推定残高」を表示します。
       </div>
     </div>
@@ -1852,13 +1761,7 @@ function wireViewEvents(){
   // Add entry
   const btnAddEntry = $("#btnAddEntry");
   if(btnAddEntry){
-    btnAddEntry.addEventListener("click", ()=>{
-      // Resolve active money sub-tab from DOM to avoid state desync
-      const activeBtn = document.querySelector('[data-moneytab].active') || document.querySelector('.tab.active[data-moneytab]');
-      const key = activeBtn ? activeBtn.dataset.moneytab : null;
-      if(key) state._moneyTab = key;
-      openEntryModal("add");
-    });
+    btnAddEntry.addEventListener("click", ()=> openEntryModal("add"));
   }
 
   // edit/delete entry
@@ -1937,28 +1840,6 @@ function wireViewEvents(){
       const id = btn.dataset.delCard;
       if(!confirm('削除しますか？')) return;
       await deleteDoc(doc(db, 'creditCards', id));
-      await reloadAll();
-    });
-  });
-
-
-  // prepaid cards
-  const btnAddPrepaid = $("#btnAddPrepaid");
-  if(btnAddPrepaid){
-    btnAddPrepaid.addEventListener("click", ()=> openPrepaidModal("add"));
-  }
-  $$('[data-edit-prepaid]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const id = btn.dataset.editPrepaid;
-      openPrepaidModal('edit', (state.prepaidCards||[]).find(x=>x.id===id));
-    });
-  });
-  $$('[data-del-prepaid]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      if(state.role==='viewer'){ alert('viewer は編集できません'); return; }
-      const id = btn.dataset.delPrepaid;
-      if(!confirm('削除しますか？')) return;
-      await deleteDoc(doc(db, 'prepaidCards', id));
       await reloadAll();
     });
   });
@@ -2176,8 +2057,8 @@ $("#modalOverlay").addEventListener("click", (e)=>{
 
 function openEntryModal(mode, entry=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const type = (entry && entry.type) ? entry.type : (state._moneyTab || "income");
-  const cats = (type==="charge") ? [] : (type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories));
+  const type = state._moneyTab || "income";
+  const cats = type==="income" ? state.master.incomeCategories : (type==="expense" ? state.master.expenseCategories : state.master.transferCategories);
   // In entry forms, hide system-generated payable accounts (they are chosen automatically when paymentMethod is クレカ)
   const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
   const opts = (selectedId)=> accounts.map(a=>`<option value="${escapeHtml(a.id)}" ${a.id===selectedId?"selected":""}>${escapeHtml(a.name)}</option>`).join("");
@@ -2205,10 +2086,6 @@ function openEntryModal(mode, entry=null){
       const cardSel = entry?.creditCardId || (state.creditCards?.[0]?.id||"");
       const cardOpts = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped")
         .map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===cardSel?"selected":""}>${escapeHtml(c.cardName||c.id)}</option>`).join("");
-      const ppSel = entry?.prepaidCardId || (state.prepaidCards?.[0]?.id||"");
-      const ppOpts = (state.prepaidCards||[]).filter(p=>p.active!==false)
-        .map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===ppSel?"selected":""}>${escapeHtml(p.cardName||p.id)}</option>`).join("");
-
       return `
         <div>
           <div class="small">支払い方法</div>
@@ -2222,11 +2099,6 @@ function openEntryModal(mode, entry=null){
           <select id="m_fromAccount" class="input">${opts(sel)}</select>
         </div>
 
-        <div id="m_prepaidWrap" style="display:none;">
-          <div class="small">プリペイド</div>
-          <select id="m_prepaid" class="input">${ppOpts}</select>
-        </div>
-
         <div id="m_cardWrap" style="display:none;">
           <div class="small">クレカ</div>
           <select id="m_card" class="input">${cardOpts}</select>
@@ -2238,43 +2110,6 @@ function openEntryModal(mode, entry=null){
         </div>
       `;
     }
-
-    if(type==="charge"){
-      const payMethods = (state.master.paymentMethods||["現金","振込","口座引落","クレカ"]);
-      const methodSel = entry?.chargeMethod || entry?.paymentMethod || payMethods[0] || "現金";
-      const fromSel = entry?.fromAccountId || accounts[0]?.id || "";
-      const cardSel = entry?.creditCardId || (state.creditCards?.[0]?.id||"");
-      const toP = entry?.prepaidCardId || (state.prepaidCards?.[0]?.id||"");
-      const cardOpts = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped")
-        .map(c=>`<option value="${escapeHtml(c.id)}" ${c.id===cardSel?"selected":""}>${escapeHtml(c.cardName||c.id)}</option>`).join("");
-      const ppOpts = (state.prepaidCards||[]).filter(p=>p.active!==false)
-        .map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===toP?"selected":""}>${escapeHtml(p.cardName||p.id)}</option>`).join("");
-
-      return `
-        <div>
-          <div class="small">チャージ方法</div>
-          <select id="m_payMethod" class="input">
-            ${payMethods.map(p=>`<option ${p===methodSel?"selected":""}>${escapeHtml(p)}</option>`).join("")}
-          </select>
-        </div>
-
-        <div id="m_fromWrap">
-          <div class="small">チャージ元</div>
-          <select id="m_fromAccount" class="input">${opts(fromSel)}</select>
-        </div>
-
-        <div id="m_cardWrap" style="display:none;">
-          <div class="small">クレカ</div>
-          <select id="m_card" class="input">${cardOpts}</select>
-        </div>
-
-        <div>
-          <div class="small">チャージ先（プリペイド）</div>
-          <select id="m_toPrepaid" class="input">${ppOpts}</select>
-        </div>
-      `;
-    }
-
     // transfer
     const selF = entry?.fromAccountId || accounts[0]?.id || "";
     const selT = entry?.toAccountId || accounts[1]?.id || accounts[0]?.id || "";
@@ -2292,7 +2127,7 @@ function openEntryModal(mode, entry=null){
 
   showModal(mode==="add" ? "入力を追加" : "入力を編集", `
     <div class="formGrid">
-      <div style="display:${type==="charge" ? "none" : ""};">
+      <div>
         <div class="small">カテゴリ</div>
         <select id="m_category" class="input">
           ${cats.map(c=>`<option ${c===(entry?.category||cats[0])?"selected":""}>${escapeHtml(c)}</option>`).join("")}
@@ -2322,31 +2157,11 @@ function openEntryModal(mode, entry=null){
   
   // expense: toggle payment UI
   const syncPayUi = ()=>{
-    if(type!=="expense" && type!=="charge") return;
+    if(type!=="expense") return;
     const pm = $("#m_payMethod") ? $("#m_payMethod").value : "";
     const isCard = (pm==="クレカ");
-    const isPrepaid = (pm==="プリペイド");
     if($("#m_cardWrap")) $("#m_cardWrap").style.display = isCard ? "" : "none";
-    if($("#m_prepaidWrap")) $("#m_prepaidWrap").style.display = isPrepaid ? "" : "none";
-    if($("#m_fromWrap")) {
-      const wrap = $("#m_fromWrap");
-      const sel = $("#m_fromAccount");
-      const cashId = state.master?.cashAccountId || "cash";
-      wrap.style.display = (isCard || isPrepaid) ? "none" : "";
-      if(type==="charge" && sel){
-        // For cash charge: show "----" (no charge-from selection), but internally treat it as cash account.
-        if(!sel.dataset.orig) sel.dataset.orig = sel.innerHTML;
-        if(pm==="現金"){
-          sel.innerHTML = `<option value="${cashId}">----</option>`;
-          sel.value = cashId;
-          sel.disabled = true;
-        }else{
-          // restore original options
-          if(sel.dataset.orig) sel.innerHTML = sel.dataset.orig;
-          sel.disabled = false;
-        }
-      }
-    }
+    if($("#m_fromWrap")) $("#m_fromWrap").style.display = isCard ? "none" : "";
   };
   if($("#m_payMethod")) $("#m_payMethod").addEventListener("change", syncPayUi);
   syncPayUi();
@@ -2362,53 +2177,24 @@ $("#m_save").addEventListener("click", async ()=>{
     const toAccountId = $("#m_toAccount") ? $("#m_toAccount").value : null;
     const paymentMethod = $("#m_payMethod") ? $("#m_payMethod").value : null;
     const creditCardId = $("#m_card") ? $("#m_card").value : null;
-    const prepaidCardId = $("#m_prepaid") ? $("#m_prepaid").value : null;
     const creditChannel = $("#m_cardChannel") ? $("#m_cardChannel").value : null;
 
-    // Effective accounts (system rules)
+    // expense: when クレカ, post to payable (支払予定) account instead of bank
     let effectiveFrom = fromAccountId;
-    let effectiveTo = toAccountId;
     let effectiveCardId = null;
-    let effectivePrepaidId = prepaidCardId || null;
-
     if(type==="expense" && paymentMethod==="クレカ"){
       effectiveCardId = creditCardId || null;
       // Always post to this card's payable account (auto-generated)
       effectiveFrom = effectiveCardId ? payableAccountIdForCardId(effectiveCardId) : null;
     }
 
-    if(type==="expense" && paymentMethod==="プリペイド"){
-      // Expense paid by prepaid: subtract from prepaid balance
-      effectiveFrom = effectivePrepaidId ? prepaidAccountIdForCardId(effectivePrepaidId) : null;
-    }
-
-    if(type==="charge"){
-      // Charge: from source -> prepaid
-      const chMethod = paymentMethod || "現金";
-      const toP = $("#m_toPrepaid") ? $("#m_toPrepaid").value : (effectivePrepaidId||"");
-      effectivePrepaidId = toP || null;
-      effectiveTo = effectivePrepaidId ? prepaidAccountIdForCardId(effectivePrepaidId) : null;
-
-      if(chMethod==="クレカ"){
-        effectiveCardId = creditCardId || null;
-        effectiveFrom = effectiveCardId ? payableAccountIdForCardId(effectiveCardId) : null;
-      }else{
-        effectiveCardId = null;
-        effectiveFrom = fromAccountId || null;
-      }
-    }
-
     const payload = {
-      type,
-      category: (type==="charge") ? "チャージ" : (category||""),
-      amount, note, occurredAt,
+      type, category, amount, note, occurredAt,
       paymentMethod: paymentMethod || null,
-      chargeMethod: (type==="charge") ? (paymentMethod||null) : null,
       creditCardId: effectiveCardId,
-      prepaidCardId: (type==="expense" && paymentMethod==="プリペイド") ? (effectivePrepaidId||null) : ((type==="charge") ? (effectivePrepaidId||null) : null),
       creditChannel: (paymentMethod==="クレカ") ? (creditChannel||null) : null,
       fromAccountId: effectiveFrom || null,
-      toAccountId: effectiveTo || null,
+      toAccountId: toAccountId || null,
       updatedAt: Date.now()
     };
 
@@ -2642,115 +2428,6 @@ function openFixedModal(mode, item=null){
       await addDoc(collection(db, "fixedCosts"), payload);
     }else{
       await updateDoc(doc(db, "fixedCosts", item.id), payload);
-    }
-    hideModal();
-    await reloadAll();
-  }, { once:true });
-}
-
-
-function renderPrepaidCards(){
-  const list = (state.prepaidCards||[]).slice().sort((a,b)=> (a.cardName||"").localeCompare(b.cardName||""));
-  const visible = list.filter(x=>x.active!==false);
-
-  const mb = mergedBalances();
-  const deltas = accountDeltasFromEntries();
-  const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
-  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
-  const balOf = (accId)=> Number((mb.find(x=>x.id===accId)?.balance)||0);
-  const estOf = (accId)=> balOf(accId) + deltaOf(accId);
-
-  return `
-    <div class="card">
-      <div class="row">
-        <h2 class="h1">プリペイドカード</h2>
-        <div class="spacer"></div>
-        <button class="btn" id="btnAddPrepaid">＋追加</button>
-      </div>
-      <div class="sep"></div>
-
-      <div style="overflow:auto;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>カード名</th>
-              <th class="right">月末残高</th>
-              <th class="right">今月差分</th>
-              <th class="right">推定残高</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${visible.length===0 ? `<tr><td colspan="5" class="small">まだありません。</td></tr>` : visible.map(p=>{
-              const accId = prepaidAccountIdForCardId(p.id);
-              const b = balOf(accId);
-              const d = deltaOf(accId);
-              const e = estOf(accId);
-              return `
-                <tr>
-                  <td>${escapeHtml(p.cardName||p.id)}</td>
-                  <td class="right">¥${yen(b)}</td>
-                  <td class="right">¥${yen(d)}</td>
-                  <td class="right">¥${yen(e)}</td>
-                  <td class="right">
-                    <button class="btn secondary" data-edit-prepaid="${escapeHtml(p.id)}">編集</button>
-                    <button class="btn danger" data-del-prepaid="${escapeHtml(p.id)}">削除</button>
-                  </td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="sep"></div>
-      <div class="small">
-        ・プリペイドは「口座」と同じ扱いで、月末残高は「口座管理 ＞ 残高入力」でも更新できます。<br/>
-        ・出金で「プリペイド」を選ぶと残高から減算されます。チャージは「入出金 ＞ チャージ」で入力します。
-      </div>
-    </div>
-  `;
-}
-
-function openPrepaidModal(mode, card=null){
-  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-
-  const c = card || {};
-  showModal(mode==="add" ? "プリペイドカードを追加" : "プリペイドカードを編集", `
-    <div class="formGrid">
-      <div>
-        <div class="small">カード名</div>
-        <input id="pp_name" class="input" value="${escapeHtml(c.cardName||"")}" placeholder="例：TOICA / WAON / Suica など" />
-      </div>
-      <div>
-        <div class="small">有効</div>
-        <select id="pp_active" class="input">
-          <option value="true" ${c.active!==false ? "selected":""}>有効</option>
-          <option value="false" ${c.active===false ? "selected":""}>停止</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:12px;">
-      <button class="btn" id="pp_save">保存</button>
-      <div class="spacer"></div>
-      <span class="small">${mode==="add" ? "" : `id: ${escapeHtml(c.id||"")}`}</span>
-    </div>
-  `);
-
-  $("#pp_save").addEventListener("click", async ()=>{
-    const cardName = $("#pp_name").value.trim();
-    const active = $("#pp_active").value === "true";
-    if(!cardName){ alert("カード名を入力してください"); return; }
-
-    const payload = { cardName, active, updatedAt: Date.now() };
-
-    if(mode==="add"){
-      payload.createdAt = Date.now();
-      payload.createdBy = state.user.uid;
-      await addDoc(collection(db, "prepaidCards"), payload);
-    }else{
-      await updateDoc(doc(db, "prepaidCards", c.id), payload);
     }
     hideModal();
     await reloadAll();
