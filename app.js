@@ -142,7 +142,7 @@ async function loadMonthData(month){
   const legacyFamily = s5.docs.map(d=>({id:d.id, ...d.data()}));
 
   // Prefer new people_persons if exists
-  state.family = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : legacyFamily;
+  state.family = legacyFamily; // legacy only; family tab uses people_persons
 
   // Auto-sync birthdays to events (idempotent). Requires editor/admin.
   await syncBirthdayEvents();
@@ -399,6 +399,22 @@ function parseDateLikeToMs(v){
     if(!Number.isNaN(t)) return t;
   }
   return null;
+}
+
+
+function displayYmd(v){
+  const ms = parseDateLikeToMs(v);
+  return ms ? ymd(ms) : "-";
+}
+function calcAge(v){
+  const ms = parseDateLikeToMs(v);
+  if(!ms) return "-";
+  const b = new Date(ms);
+  const t = new Date();
+  let age = t.getFullYear() - b.getFullYear();
+  const m = t.getMonth() - b.getMonth();
+  if(m < 0 || (m===0 && t.getDate() < b.getDate())) age--;
+  return age>=0 && isFinite(age) ? String(age) : "-";
 }
 
 function paymentDateMsForMonth(card, payMonthKey){
@@ -753,9 +769,7 @@ function renderHome(){
 
 
 function renderFamily(){
-  const persons = (state.peoplePersons && state.peoplePersons.length)
-    ? state.peoplePersons
-    : (state.family || []);
+  const persons = (state.peoplePersons || []);
 
   const showInactive = !!state._showInactiveFamily;
   const rows = persons
@@ -763,7 +777,9 @@ function renderFamily(){
     .map(p=>{
       const inactive = (p.active===false) || (p.is_living_with===false);
       const rel = p.relation || "-";
-      const bd = p.birth_date || p.birthDate || "-";
+      const bdRaw = p.birth_date || p.birthDate || null;
+      const bd = displayYmd(bdRaw);
+      const age = calcAge(bdRaw);
       const kana = p.name_kana || "-";
       const phone = p.phone_number || "-";
       const mail = p.email || "-";
@@ -776,6 +792,7 @@ function renderFamily(){
           <td>${escapeHtml(p.name||"")}${inactive?` <span class="pill">無効</span>`:""}</td>
           <td>${escapeHtml(rel)}</td>
           <td>${escapeHtml(bd)}</td>
+          <td>${escapeHtml(age)}</td>
           <td>${escapeHtml(kana)}</td>
           <td>${escapeHtml(phone)}</td>
           <td>${escapeHtml(mail)}</td>
@@ -811,6 +828,7 @@ function renderFamily(){
               <th>名前</th>
               <th>続柄</th>
               <th>誕生日</th>
+              <th>年齢</th>
               <th>ふりがな</th>
               <th>電話</th>
               <th>メール</th>
@@ -821,7 +839,7 @@ function renderFamily(){
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="10" class="muted">まだありません。</td></tr>`}
+            ${rows || `<tr><td colspan="11" class="muted">まだありません。</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -836,7 +854,7 @@ function renderFamily(){
 
 function renderCar(){
   const list = (state.cars||[]).slice().sort((a,b)=> (a.carName||"").localeCompare(b.carName||""));
-  const owners = (state.family||[]).filter(f=>f.active!==false);
+  const owners = (state.peoplePersons&&state.peoplePersons.length?state.peoplePersons:(state.family||[])).filter(f=> (f.is_living_with!==false && f.active!==false));
   const ownerName = (id)=> owners.find(o=>o.id===id)?.name || id || "-";
 
   return `
@@ -940,7 +958,7 @@ function renderInsurance(){
             </tr>
           </thead>
           <tbody>
-            ${list.length===0 ? `<tr><td colspan="10" class="small">まだありません。</td></tr>` : list.map(x=>{
+            ${list.length===0 ? `<tr><td colspan="11" class="small">まだありません。</td></tr>` : list.map(x=>{
               const cardName = cards.find(c=>c.id===x.paymentCardId)?.cardName || "-";
               return `
                 <tr>
@@ -1570,17 +1588,17 @@ function renderEvents(){
   const suggested = [];
 
   // family birthdays
-  ( (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[]) ).filter(f=>f.active!==false).forEach(f=>{
+  (state.peoplePersons||[]).filter(f=>f.is_living_with!==false).forEach(f=>{
     const ms = nextBirthdayMs(f.birth_date || f.birthDate || "");
     if(ms && withinDays(ms, 90)){
-      const st = (state.peoplePersons && state.peoplePersons.length) ? "people_persons" : "family";
+      const st = "people_persons";
       const key = `${st}:${f.id}:birthday:${ms}`;
       if(!exists.has(key)){
         suggested.push({
           title: `${f.name||"家族"} 誕生日`,
           type: "birthday",
           date: ms,
-          sourceType: (state.peoplePersons && state.peoplePersons.length) ? "people_persons" : "family",
+          sourceType: "people_persons",
           sourceId: f.id
         });
       }
@@ -1928,14 +1946,14 @@ function wireViewEvents(){
   $$("[data-edit-person]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const id = btn.dataset.editPerson;
-      const p = (state.peoplePersons||state.family||[]).find(x=>x.id===id);
+      const p = (state.peoplePersons||[]).find(x=>x.id===id);
       openPersonModal("edit", p);
     });
   });
   $$("[data-edit-health]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const id = btn.dataset.editHealth;
-      const p = (state.peoplePersons||state.family||[]).find(x=>x.id===id);
+      const p = (state.peoplePersons||[]).find(x=>x.id===id);
       openHealthModal(p);
     });
   });
@@ -1947,8 +1965,6 @@ function wireViewEvents(){
       // delete both
       await deleteDoc(doc(db, "people_persons", id)).catch(()=>{});
       await deleteDoc(doc(db, "people_health", id)).catch(()=>{});
-      // legacy cleanup if exists
-      await deleteDoc(doc(db, "family", id)).catch(()=>{});
       await reloadAll();
     });
   });
@@ -2752,7 +2768,7 @@ function openInsuranceModal(mode, item=null){
 
 function openCarModal(mode, item=null){
   if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  const owners = (state.family||[]).filter(f=>f.active!==false);
+  const owners = (state.peoplePersons&&state.peoplePersons.length?state.peoplePersons:(state.family||[])).filter(f=> (f.is_living_with!==false && f.active!==false));
   showModal(mode==="add" ? "車を追加" : "車を編集", `
     <div class="formGrid">
       <div>
@@ -3256,12 +3272,19 @@ function openPersonModal(mode, item=null){
 
       <div>
         <div class="small">誕生日</div>
-        <input id="pp_birth" class="input" placeholder="YYYY/MM/DD" value="${escapeHtml(p.birth_date||p.birthDate||"")}" />
+        <input id="pp_birth" class="input" type="date" value="${escapeHtml((p.birth_date||p.birthDate||"").replace(/\//g,"-") )}" />
       </div>
 
       <div>
         <div class="small">性別（任意）</div>
-        <input id="pp_gender" class="input" placeholder="male / female / other" value="${escapeHtml(p.gender||"")}" />
+        <select id="pp_gender" class="input">
+          ${[
+            {v:"", l:"-"},
+            {v:"male", l:"male"},
+            {v:"female", l:"female"},
+            {v:"other", l:"other"},
+          ].map(o=>`<option value="${o.v}" ${(p.gender||"")===(o.v)?"selected":""}>${o.l}</option>`).join("")}
+        </select>
       </div>
 
       <div>
@@ -3302,7 +3325,7 @@ function openPersonModal(mode, item=null){
     const payload = {
       name,
       relation: $("#pp_relation").value,
-      birth_date: $("#pp_birth").value.trim(),
+      birth_date: ($("#pp_birth").value||"").trim().replace(/\-/g,"/"),
       gender: $("#pp_gender").value.trim(),
       name_kana: $("#pp_kana").value.trim(),
       is_living_with: $("#pp_living").value === "true",
@@ -3314,24 +3337,8 @@ function openPersonModal(mode, item=null){
 
     if(isEdit){
       await setDoc(doc(db, "people_persons", p.id), payload, { merge: true });
-      // legacy mirror (optional): keep family in sync for older screens
-      await setDoc(doc(db, "family", p.id), {
-        name: payload.name,
-        relation: payload.relation,
-        birthDate: payload.birth_date,
-        memo: payload.notes,
-        active: payload.is_living_with
-      }, { merge: true }).catch(()=>{});
     }else{
       const ref = await addDoc(collection(db, "people_persons"), { ...payload, createdAt: Date.now() });
-      // legacy mirror
-      await setDoc(doc(db, "family", ref.id), {
-        name: payload.name,
-        relation: payload.relation,
-        birthDate: payload.birth_date,
-        memo: payload.notes,
-        active: payload.is_living_with
-      }, { merge: true }).catch(()=>{});
     }
 
     closeModal();
