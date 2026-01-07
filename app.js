@@ -487,13 +487,23 @@ function entryAccountLabel(e){
 
 function accountDeltasFromEntries(){
   const m = new Map();
+  const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
   for(const e of (state.entries||[])){
     const amt = Number(e.amount||0);
     if(e.type==="income"){
       const to = e.toAccountId;
       if(to){ m.set(to, (m.get(to)||0) + amt); }
     }else if(e.type==="expense"){
-      const from = e.fromAccountId;
+      let from = e.fromAccountId;
+      // For credit-card expenses, if fromAccountId is not set, attribute to the card's payable account
+      if(!from && e.paymentMethod==="クレカ"){
+        let cardId = e.creditCardId;
+        if(!cardId && e.meta?.fixedCostId){
+          const fc = fixedMap.get(e.meta.fixedCostId);
+          if(fc?.creditCardId) cardId = fc.creditCardId;
+        }
+        if(cardId) from = payableAccountIdForCardId(cardId);
+      }
       if(from){ m.set(from, (m.get(from)||0) - amt); }
     }else if(e.type==="transfer"){
       const from = e.fromAccountId;
