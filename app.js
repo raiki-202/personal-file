@@ -2322,6 +2322,17 @@ function openFixedModal(mode, item=null){
   $("#f_cycleType").addEventListener("change", ()=>{ syncCycleWrap(); recalcNext(); });
   $("#f_payDay").addEventListener("change", recalcNext);
   $("#f_payMonth").addEventListener("change", recalcNext);
+  $("#f_pay").addEventListener("change", ()=>{
+    syncPayWrap();
+    // default card when switching to クレカ
+    if($("#f_pay").value==="クレカ"){
+      const sel = $("#f_creditCard");
+      if(sel && !sel.value && sel.options.length){ sel.value = sel.options[0].value; }
+    }
+  });
+  $("#f_payAccount").addEventListener("change", recalcNext);
+  $("#f_creditCard").addEventListener("change", recalcNext);
+
 
   syncPayWrap();
   syncCycleWrap();
@@ -2344,6 +2355,16 @@ function openFixedModal(mode, item=null){
       memo: $("#f_memo").value || "",
       updatedAt: Date.now()
     };
+    // validation
+    if(payload.paymentMethod==="クレカ" && !payload.creditCardId){
+      alert("支払方法がクレカの場合は「支払カード」を選択してください");
+      return;
+    }
+    if(payload.paymentMethod!=="クレカ" && !payload.payAccountId){
+      alert("支払方法がクレカ以外の場合は「支払口座」を選択してください");
+      return;
+    }
+
     if(mode==="add"){
       await addDoc(collection(db, "fixedCosts"), payload);
     }else{
