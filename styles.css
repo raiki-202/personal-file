@@ -244,40 +244,8 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
     overflow-x:auto;
     -webkit-overflow-scrolling: touch;
   }
-  /* Money(iPhone): history card no horizontal scroll */
-  [data-route="money"] .historyCard{overflow-x:hidden; -webkit-overflow-scrolling:auto;}
-
   .table{
     min-width: 520px;
-  }
-
-  /* =========================
-     iPhone: Home tab (no table scroll)
-     - compact tables so they fit in the card without horizontal scroll
-     ========================= */
-  #appView[data-route="home"] .card{
-    overflow-x: visible;
-  }
-  #appView[data-route="home"] .table{
-    min-width: 0;
-    width: 100%;
-    table-layout: fixed;
-  }
-  #appView[data-route="home"] .table th,
-  #appView[data-route="home"] .table td{
-    padding: 8px 6px;
-    font-size: 12px;
-    line-height: 1.2;
-  }
-  #appView[data-route="home"] .table td{
-    word-break: break-word;
-    overflow-wrap: anywhere;
-  }
-
-  /* 90日以内の期限: 種別列はiPhoneでは非表示（詰めてカード内に収める） */
-  #appView[data-route="home"] table.homeSoon th:nth-child(3),
-  #appView[data-route="home"] table.homeSoon td:nth-child(3){
-    display:none;
   }
 
   .tabs{
@@ -386,35 +354,3 @@ label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px 2px}
   padding:6px 10px;
   cursor:pointer;
 }
-
-
-/* ===== Money: compact history (iPhone) ===== */
-.histList{display:flex; flex-direction:column; gap:8px}
-.histItem{
-  width:100%;
-  text-align:left;
-  border:1px solid var(--line);
-  background: rgba(255,255,255,.72);
-  border-radius:14px;
-  padding:10px 12px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  cursor:pointer;
-}
-.histItem:active{transform:scale(.99)}
-.histLeft{display:flex; flex-direction:column; gap:4px; min-width:0}
-.histDate{font-size:12px; color:var(--sub)}
-.histCat{font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:52vw}
-.histAmt{font-weight:700}
-
-.detailList{display:flex; flex-direction:column; gap:10px}
-.detailRow{
-  display:grid;
-  grid-template-columns: 96px 1fr;
-  gap:10px;
-  align-items:start;
-}
-.detailLabel{color:var(--sub); font-size:12px; padding-top:2px}
-.detailValue{color:var(--text); font-size:14px; word-break:break-word}
