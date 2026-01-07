@@ -180,7 +180,7 @@ async function ensureFixedCostPosts(month){
       const payMonth = Number(fc.payMonth||0) || null;
 
       // determine nextPayDate
-      let nextMs = fc.nextPayDate || null;
+      let nextMs = parseDateLikeToMs(fc.nextPayDate);
       if(!nextMs){
         nextMs = nextFixedCostDateFromSettings(cycleType, payDay, payMonth, Date.now());
         // persist the computed schedule base
@@ -347,7 +347,26 @@ function ymd(ms){
   const y=d.getFullYear();
   const m=String(d.getMonth()+1).padStart(2,"0");
   const dd=String(d.getDate()).padStart(2,"0");
-  return `${y}/${m}/${dd}`;
+  return `${y}/
+function parseDateLikeToMs(v){
+  // Accept: ms(number), ISO string, "YYYY/MM/DD", "YYYY-MM-DD"
+  if(v==null) return null;
+  if(typeof v==="number" && isFinite(v)) return v;
+  if(typeof v==="string"){
+    const s=v.trim();
+    if(!s) return null;
+    // YYYY/MM/DD or YYYY-MM-DD
+    let m=s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if(m){
+      const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
+      if(y&&mo&&d) return new Date(y, mo-1, d, 0,0,0,0).getTime();
+    }
+    const t=Date.parse(s);
+    if(!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+${m}/${dd}`;
 }
 function paymentDateMsForMonth(card, payMonthKey){
   const [y,m]=payMonthKey.split("-").map(n=>Number(n));
