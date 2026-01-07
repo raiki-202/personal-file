@@ -641,6 +641,10 @@ function mount(){
   else if(state.route==="events") view.innerHTML = renderEvents();
   else if(state.route==="settings") view.innerHTML = renderSettings();
   else view.innerHTML = renderHome();
+
+  // for responsive / route-specific CSS (e.g. iPhone home compact view)
+  view.dataset.route = state.route || "home";
+
   wireViewEvents();
 }
 
@@ -686,7 +690,7 @@ function renderHome(){
 	      </div>
 	      <div class="sep"></div>
 	      ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
-	        <table class="table">
+	        <table class="table homeSoon">
 	          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
 	          <tbody>
 	            ${soon.slice(0,8).map(e=>`
@@ -757,7 +761,7 @@ function renderHome(){
           <span class="badge">合計 ¥${yen(totalBankEst)}</span>
         </div>
         <div class="sep"></div>
-        <table class="table">
+	        <table class="table homeBank">
           <thead><tr><th>口座</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${bankRows.map(r=>`
@@ -777,7 +781,7 @@ function renderHome(){
           <span class="badge">合計 ¥${yen(totalCardOutstanding)}</span>
         </div>
         <div class="sep"></div>
-        <table class="table">
+	        <table class="table homeCardPay">
           <thead><tr><th>カード</th><th class="right">推定残高</th></tr></thead>
           <tbody>
             ${payableRows.map(r=>`
