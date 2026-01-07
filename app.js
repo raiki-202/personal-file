@@ -612,6 +612,31 @@ function renderHome(){
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
+	    <div class="card" style="margin-bottom:12px;">
+	      <div class="row">
+	        <h2 class="h1">90日以内の期限</h2>
+	        <div class="spacer"></div>
+	        <span class="badge">${soon.length}件</span>
+	        <button class="btn secondary" data-go="events">定期イベントへ</button>
+	      </div>
+	      <div class="sep"></div>
+	      ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
+	        <table class="table">
+	          <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
+	          <tbody>
+	            ${soon.slice(0,8).map(e=>`
+	              <tr>
+	                <td>${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
+	                <td>${escapeHtml(e.title||"")}</td>
+	                <td>${escapeHtml(e.kind||"")}</td>
+	              </tr>
+	            `).join("")}
+	          </tbody>
+	        </table>
+	      `}
+	      <div class="small" style="margin-top:10px;">※家族/カード/住宅/車/カスタムをここで一括管理</div>
+	    </div>
+
     <div class="grid cols3">
       <div class="card">
         <div class="h2">今月の収入</div>
@@ -700,31 +725,7 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card">
-        <div class="row">
-          <h2 class="h1">90日以内の期限</h2>
-          <div class="spacer"></div>
-          <span class="badge">${soon.length}件</span>
-          <button class="btn secondary" data-go="events">定期イベントへ</button>
-        </div>
-        <div class="sep"></div>
-        ${soon.length===0 ? `<div class="small">期限90日以内のイベントはありません。</div>` : `
-          <table class="table">
-            <thead><tr><th>日付</th><th>タイトル</th><th>種別</th></tr></thead>
-            <tbody>
-              ${soon.slice(0,8).map(e=>`
-                <tr>
-                  <td>${new Date(Number(e.date||0)).toLocaleDateString("ja-JP")}</td>
-                  <td>${escapeHtml(e.title||"")}</td>
-                  <td>${escapeHtml(e.kind||"")}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        `}
-        <div class="small" style="margin-top:10px;">※家族/カード/住宅/車/カスタムをここで一括管理</div>
-      </div>
-    </div>
+	    </div>
   `;
 }
 
