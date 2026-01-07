@@ -52,6 +52,25 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+// =========================
+// iPhone-only UI tweaks (PC/iPad unchanged)
+// - Attach a single class to <body> and branch in renderers + CSS
+// =========================
+function isIphone(){
+  return typeof document !== "undefined" && document.body?.classList?.contains("is-iphone");
+}
+
+// Add iPhone marker class once. (We intentionally do NOT target iPad.)
+if(typeof navigator !== "undefined"){
+  const ua = navigator.userAgent || "";
+  if(/iPhone/i.test(ua)){
+    // DOM might not be ready at module eval time depending on load order.
+    const apply = ()=>document.body?.classList?.add("is-iphone");
+    if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once:true });
+    else apply();
+  }
+}
+
 function yen(n){
   const x = Number(n || 0);
   return x.toLocaleString("ja-JP");
@@ -677,7 +696,7 @@ function renderHome(){
   const soon = state.events.filter(e=> e.active!==false && withinDays(Number(e.date||0), 90));
 
   return `
-	    <div class="card" style="margin-bottom:12px;">
+	    <div class="card homeSoonCard" style="margin-bottom:12px;">
 	      <div class="row">
 	        <h2 class="h1">90日以内の期限</h2>
 	        <div class="spacer"></div>
@@ -723,8 +742,8 @@ function renderHome(){
       const np = computeNextCardPayment();
       if(!np || !np.total) return "";
       return `
-        <div class="grid cols3" style="margin-top:12px;">
-          <div class="card">
+        <div class="grid cols3 homeCardNextPay" style="margin-top:12px;">
+          <div class="card homeHideIphone">
             <div class="h2">次回クレカ支払予定</div>
             <div class="kpi">¥${yen(np.total)}</div>
             <div class="small">支払日（目安）：${escapeHtml(np.dateStr)}</div>
@@ -736,7 +755,7 @@ function renderHome(){
 
 
 
-    <div class="card" style="margin-top:12px;">
+    <div class="card homeAccountTotal" style="margin-top:12px;">
       <div class="row">
         <h2 class="h1">口座合計（入力/差分反映後）</h2>
         <div class="spacer"></div>
@@ -770,7 +789,7 @@ function renderHome(){
         </table>
       </div>
 
-      <div class="card">
+      <div class="card homeHideIphone">
         <div class="row">
           <h2 class="h1">クレカ支払予定</h2>
           <div class="spacer"></div>
@@ -856,6 +875,50 @@ function renderFamily(){
         </tr>
       `;
     }).join("");
+
+  // iPhone: compact list (name / birth / age) -> tap to detail modal
+  if(isIphone()){
+    const items = list.filter(x=> showInactive ? true : (x.active!==false)).map(x=>{
+      const bdRaw = (x.birth_date || x.birthDate || "") ? String(x.birth_date || x.birthDate).replace(/\//g,"-") : "";
+      const bd = bdRaw ? escapeHtml(bdRaw) : "-";
+      const age = bdRaw ? (calcAge(bdRaw)||"-") : "-";
+      const inactive = (x.active===false);
+      return {
+        id: x.id,
+        name: `${x.name||""}${inactive?" (無効)":""}`,
+        birth: bd,
+        age
+      };
+    });
+
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">家族</h2>
+          <div class="spacer"></div>
+          <label class="chip">
+            <input id="toggleFamilyInactive" type="checkbox" ${showInactive?"checked":""}/>
+            <span>無効も表示</span>
+          </label>
+          <button class="btn" id="btnAddPerson">＋追加</button>
+        </div>
+        <div class="sep"></div>
+        <div class="histList">
+          ${items.length===0 ? `<div class="small">まだありません。</div>` : items.map(p=>`
+            <button class="histItem" data-person-detail="${p.id}">
+              <div class="histMain">
+                <div class="histTitle">${escapeHtml(p.name||"")}</div>
+                <div class="histDate">${escapeHtml(p.birth)} / ${escapeHtml(p.age)}歳</div>
+              </div>
+              <div class="pill">詳細</div>
+            </button>
+          `).join("")}
+        </div>
+        <div class="sep"></div>
+        <div class="small">・タップで詳細表示（編集/削除）。</div>
+      </div>
+    `;
+  }
 
   return `
     <div class="card">
@@ -984,6 +1047,36 @@ function renderInsurance(){
   const list = (state.insurances||[]).slice().sort((a,b)=> (a.insuranceName||"").localeCompare(b.insuranceName||""));
   const pay = state.master.paymentMethods || [];
   const cards = state.creditCards || [];
+
+  // iPhone: compact list (insuranceName / insuredPerson / paymentCard / amount) -> tap to detail modal
+  if(isIphone()){
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">保険</h2>
+          <div class="spacer"></div>
+          <button class="btn" id="btnAddInsurance">＋追加</button>
+        </div>
+        <div class="sep"></div>
+        <div class="histList">
+          ${list.length===0 ? `<div class="small">まだありません。</div>` : list.map(x=>{
+            const cardName = cards.find(c=>c.id===x.paymentCardId)?.cardName || "-";
+            return `
+              <button class="histItem" data-insurance-detail="${x.id}">
+                <div class="histMain">
+                  <div class="histTitle">${escapeHtml(x.insuranceName||"")}</div>
+                  <div class="histDate">${escapeHtml(x.insuredPerson||"-")} / ${escapeHtml(cardName)}${x.amount!=null?` / ¥${yen(x.amount||0)}`:""}</div>
+                </div>
+                <div class="pill">詳細</div>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <div class="sep"></div>
+        <div class="small">・タップで詳細表示（編集/削除）。</div>
+      </div>
+    `;
+  }
 
   return `
     <div class="card">
@@ -1238,6 +1331,49 @@ function renderMoneyEntries(){
   ];
   const active = state._moneyTab || "income";
   const eList = state.entries.filter(e=> e.type===active);
+
+  // iPhone: compact list (date / category / amount / memo) -> tap to detail modal
+  if(isIphone()){
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">月次入力（入出金 / 移動）</h2>
+          <div class="spacer"></div>
+          <span class="badge">role: ${escapeHtml(state.role||"")}</span>
+          <button class="btn" id="btnAddEntry">＋追加</button>
+        </div>
+        <div class="sep"></div>
+
+        <div class="tabs">
+          ${tabs.map(t=>`<button class="tab ${t.key===active?"active":""}" data-moneytab="${t.key}">${t.label}</button>`).join("")}
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="histList">
+          ${eList.length===0 ? `<div class="small">まだありません。</div>` : eList.map(e=>{
+            const d = e.occurredAt ? new Date(Number(e.occurredAt)).toLocaleDateString("ja-JP") : "-";
+            const memo = (e.note || e.memo || "");
+            return `
+              <button class="histItem" data-entrydetail="${e.id}">
+                <div class="histMain">
+                  <div class="histDate">${d}</div>
+                  <div class="histTitle">${escapeHtml(e.category||"")}${memo ? ` <span class="muted">/ ${escapeHtml(memo)}</span>` : ""}</div>
+                </div>
+                <div class="histAmount">¥${yen(e.amount)}</div>
+              </button>
+            `;
+          }).join("")}
+        </div>
+
+        <div class="sep"></div>
+        <div class="small">
+          ・タップで詳細表示（編集/削除）。
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="card">
       <div class="row">
@@ -1455,6 +1591,34 @@ function renderFixed(){
   const list = state.fixedCosts.slice().sort((a,b)=> (a.name||"").localeCompare(b.name||""));
   const visible = state._fixedShowHidden ? list : list.filter(x=>x.visible!==false);
 
+  // iPhone: compact list (name / category / paymentMethod / amount) -> tap to detail modal
+  if(isIphone()){
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">固定費まとめ</h2>
+          <div class="spacer"></div>
+          <button class="btn secondary" id="btnToggleHidden">${state._fixedShowHidden ? "非表示を隠す" : "非表示も表示"}</button>
+          <button class="btn" id="btnAddFixed">＋追加</button>
+        </div>
+        <div class="sep"></div>
+        <div class="histList">
+          ${visible.length===0 ? `<div class="small">まだありません。</div>` : visible.map(x=>`
+            <button class="histItem" data-fixed-detail="${x.id}">
+              <div class="histMain">
+                <div class="histTitle">${escapeHtml(x.name||"")}${x.visible===false ? ` <span class="pill">非表示</span>`:""}</div>
+                <div class="histDate">${escapeHtml(x.category||"-")} / ${escapeHtml(x.paymentMethod||"-")}</div>
+              </div>
+              <div class="histAmount">¥${yen(x.amount||0)}</div>
+            </button>
+          `).join("")}
+        </div>
+        <div class="sep"></div>
+        <div class="small">・タップで詳細表示（編集/削除）。</div>
+      </div>
+    `;
+  }
+
   return `
     <div class="card">
       <div class="row">
@@ -1513,6 +1677,37 @@ function renderCreditCards(){
     const offTxt = off===2 ? "翌々月" : "翌月";
     const pd = Number(c?.paymentDay||27)||27;
     return `締め:${close} / 支払:${offTxt}${pd}日`;
+  }
+
+  // iPhone: compact list (cardName / issuer / expiryDate) -> tap to detail modal
+  if(isIphone()){
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">クレカ情報</h2>
+          <div class="spacer"></div>
+          <label class="chip">
+            <input id="toggleCardStopped" type="checkbox" ${state._cardShowStopped?"checked":""}/>
+            <span>停止/無効も表示</span>
+          </label>
+          <button class="btn" id="btnAddCard">＋追加</button>
+        </div>
+        <div class="sep"></div>
+        <div class="histList">
+          ${visible.length===0 ? `<div class="small">まだありません。</div>` : visible.map(c=>`
+            <button class="histItem" data-card-detail="${c.id}">
+              <div class="histMain">
+                <div class="histTitle">${escapeHtml(c.cardName||"")}</div>
+                <div class="histDate">${escapeHtml(c.issuer||c.company||"-")} / ${escapeHtml(c.expiryDate||c.expireDate||"-")}</div>
+              </div>
+              <div class="pill">詳細</div>
+            </button>
+          `).join("")}
+        </div>
+        <div class="sep"></div>
+        <div class="small">・タップで詳細表示（編集/削除）。</div>
+      </div>
+    `;
   }
 
   return `
@@ -1598,6 +1793,45 @@ function renderCreditCards(){
 function renderEvents(){
   const list = (state.events||[]).filter(e=>e.active!==false);
   const soon = list.filter(e=>withinDays(Number(e.date||0), 90));
+
+  // iPhone: compact lists (date / title) -> tap to detail modal
+  if(isIphone()){
+    const rowBtn = (e)=>{
+      const d = new Date(Number(e.date||0)).toLocaleDateString("ja-JP");
+      return `
+        <button class="histItem" data-event-detail="${e.id}">
+          <div class="histMain">
+            <div class="histDate">${escapeHtml(d)}</div>
+            <div class="histTitle">${escapeHtml(e.title||"")}</div>
+          </div>
+          <div class="pill">詳細</div>
+        </button>
+      `;
+    };
+
+    return `
+      <div class="card">
+        <div class="row">
+          <h2 class="h1">定期イベント</h2>
+          <div class="spacer"></div>
+          <button class="btn" id="btnAddEvent">＋追加</button>
+        </div>
+        <div class="sep"></div>
+
+        <div class="h2">90日以内</div>
+        <div class="histList" style="margin-top:8px;">
+          ${soon.length===0 ? `<div class="small">なし</div>` : soon.map(rowBtn).join("")}
+        </div>
+
+        <div class="sep" style="margin-top:12px;"></div>
+
+        <div class="h2">全イベント</div>
+        <div class="histList" style="margin-top:8px;">
+          ${list.length===0 ? `<div class="small">なし</div>` : list.map(rowBtn).join("")}
+        </div>
+      </div>
+    `;
+  }
 
   const today0 = new Date(); today0.setHours(0,0,0,0);
   const exists = new Set(list.map(e=>`${e.sourceType||""}:${e.sourceId||""}:${e.type||""}:${Number(e.date||0)}`));
@@ -1920,6 +2154,171 @@ $$("[data-entrydetail]").forEach(btn=>{
     });
   });
 });
+
+  // fixed detail
+  $$('[data-fixed-detail]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.fixedDetail;
+      const x = state.fixedCosts.find(v=>v.id===id);
+      if(!x) return;
+      const html = `
+        <div class="kv">
+          <div class="kvRow"><div class="kvKey">支払名</div><div class="kvVal">${escapeHtml(x.name||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">カテゴリ</div><div class="kvVal">${escapeHtml(x.category||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">支払方法</div><div class="kvVal">${escapeHtml(x.paymentMethod||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">金額</div><div class="kvVal">¥${yen(x.amount||0)}</div></div>
+          <div class="kvRow"><div class="kvKey">次回支払</div><div class="kvVal">${x.nextPayDate ? new Date(Number(x.nextPayDate)).toLocaleDateString("ja-JP") : "-"}</div></div>
+          <div class="kvRow"><div class="kvKey">表示</div><div class="kvVal">${x.visible===false ? "非表示" : "表示"}</div></div>
+        </div>
+        <div class="sep"></div>
+        <div class="row" style="gap:10px;justify-content:flex-end;">
+          <button class="btn" id="btnFixedDetailEdit">編集</button>
+          <button class="btn danger" id="btnFixedDetailDel">削除</button>
+        </div>
+      `;
+      showModal("固定費：詳細", html);
+      $("#btnFixedDetailEdit")?.addEventListener("click", ()=>{ closeModal(); openFixedModal("edit", x); });
+      $("#btnFixedDetailDel")?.addEventListener("click", async ()=>{
+        if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+        closeModal();
+        if(!confirm("削除しますか？")) return;
+        await deleteDoc(doc(db, "fixedCosts", id));
+        await reloadAll();
+      });
+    });
+  });
+
+  // card detail
+  $$('[data-card-detail]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.cardDetail;
+      const c = (state.creditCards||[]).find(v=>v.id===id);
+      if(!c) return;
+      const html = `
+        <div class="kv">
+          <div class="kvRow"><div class="kvKey">カード名</div><div class="kvVal">${escapeHtml(c.cardName||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">会社</div><div class="kvVal">${escapeHtml(c.issuer||c.company||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">下4桁</div><div class="kvVal">${escapeHtml(c.last4||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">有効期限</div><div class="kvVal">${escapeHtml(c.expiryDate||c.expireDate||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">状態</div><div class="kvVal">${escapeHtml(c.status|| (c.active===false?"inactive":"active"))}</div></div>
+        </div>
+        <div class="sep"></div>
+        <div class="row" style="gap:10px;justify-content:flex-end;">
+          <button class="btn" id="btnCardDetailEdit">編集</button>
+          <button class="btn danger" id="btnCardDetailDel">削除</button>
+        </div>
+      `;
+      showModal("クレカ：詳細", html);
+      $("#btnCardDetailEdit")?.addEventListener("click", ()=>{ closeModal(); openCardModal("edit", c); });
+      $("#btnCardDetailDel")?.addEventListener("click", async ()=>{
+        if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+        closeModal();
+        if(!confirm("削除しますか？")) return;
+        await deleteDoc(doc(db, "creditCards", id));
+        await reloadAll();
+      });
+    });
+  });
+
+  // insurance detail
+  $$('[data-insurance-detail]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.insuranceDetail;
+      const x = (state.insurances||[]).find(v=>v.id===id);
+      if(!x) return;
+      const cardName = (state.creditCards||[]).find(c=>c.id===x.paymentCardId)?.cardName || "-";
+      const html = `
+        <div class="kv">
+          <div class="kvRow"><div class="kvKey">保険名</div><div class="kvVal">${escapeHtml(x.insuranceName||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">被保険者</div><div class="kvVal">${escapeHtml(x.insuredPerson||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">保険種別</div><div class="kvVal">${escapeHtml(x.insuranceType||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">保険会社</div><div class="kvVal">${escapeHtml(x.company||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">支払方法</div><div class="kvVal">${escapeHtml(x.paymentMethod||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">支払カード</div><div class="kvVal">${escapeHtml(cardName)}</div></div>
+          <div class="kvRow"><div class="kvKey">金額</div><div class="kvVal">¥${yen(x.amount||0)}</div></div>
+          <div class="kvRow"><div class="kvKey">更新日</div><div class="kvVal">${x.renewalDate ? new Date(Number(x.renewalDate)).toLocaleDateString("ja-JP") : "-"}</div></div>
+          <div class="kvRow"><div class="kvKey">PDF</div><div class="kvVal">${x.pdfLink ? `<a href="${escapeHtml(x.pdfLink)}" target="_blank" rel="noopener">PDF</a>` : "-"}</div></div>
+        </div>
+        <div class="sep"></div>
+        <div class="row" style="gap:10px;justify-content:flex-end;">
+          <button class="btn" id="btnInsDetailEdit">編集</button>
+          <button class="btn danger" id="btnInsDetailDel">削除</button>
+        </div>
+      `;
+      showModal("保険：詳細", html);
+      $("#btnInsDetailEdit")?.addEventListener("click", ()=>{ closeModal(); openInsuranceModal("edit", x); });
+      $("#btnInsDetailDel")?.addEventListener("click", async ()=>{
+        if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+        closeModal();
+        if(!confirm("削除しますか？")) return;
+        await deleteDoc(doc(db, "insurances", id));
+        await reloadAll();
+      });
+    });
+  });
+
+  // family detail
+  $$('[data-person-detail]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.personDetail;
+      const list2 = (state.peoplePersons && state.peoplePersons.length) ? state.peoplePersons : (state.family||[]);
+      const p = list2.find(v=>v.id===id);
+      if(!p) return;
+      const bdRaw = (p.birth_date || p.birthDate || "") ? String(p.birth_date || p.birthDate).replace(/\//g,"-") : "";
+      const age = bdRaw ? (calcAge(bdRaw)||"-") : "-";
+      const html = `
+        <div class="kv">
+          <div class="kvRow"><div class="kvKey">名前</div><div class="kvVal">${escapeHtml(p.name||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">誕生日</div><div class="kvVal">${bdRaw?escapeHtml(bdRaw):"-"}</div></div>
+          <div class="kvRow"><div class="kvKey">年齢</div><div class="kvVal">${escapeHtml(age)}歳</div></div>
+          <div class="kvRow"><div class="kvKey">続柄</div><div class="kvVal">${escapeHtml(p.relation||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">性別</div><div class="kvVal">${escapeHtml(p.gender||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">メモ</div><div class="kvVal">${escapeHtml((p.notes||p.memo||"")||"-")}</div></div>
+        </div>
+        <div class="sep"></div>
+        <div class="row" style="gap:10px;justify-content:flex-end; flex-wrap:wrap;">
+          <button class="btn" id="btnPersonDetailBasic">基本情報</button>
+          <button class="btn secondary" id="btnPersonDetailHealth">健康</button>
+          <button class="btn danger" id="btnPersonDetailDel">削除</button>
+        </div>
+      `;
+      showModal("家族：詳細", html);
+      $("#btnPersonDetailBasic")?.addEventListener("click", ()=>{ closeModal(); openPersonModal("edit", p); });
+      $("#btnPersonDetailHealth")?.addEventListener("click", ()=>{ closeModal(); openHealthModal(p); });
+      $("#btnPersonDetailDel")?.addEventListener("click", async ()=>{
+        if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
+        closeModal();
+        if(!confirm("削除しますか？")) return;
+        await deleteDoc(doc(db, "people_persons", id));
+        // mirror cleanup if exists
+        try{ await deleteDoc(doc(db, "family", id)); }catch(_e){}
+        await reloadAll();
+      });
+    });
+  });
+
+  // event detail
+  $$('[data-event-detail]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.eventDetail;
+      const e = (state.events||[]).find(v=>v.id===id);
+      if(!e) return;
+      const html = `
+        <div class="kv">
+          <div class="kvRow"><div class="kvKey">日付</div><div class="kvVal">${e.date ? new Date(Number(e.date)).toLocaleDateString("ja-JP") : "-"}</div></div>
+          <div class="kvRow"><div class="kvKey">タイトル</div><div class="kvVal">${escapeHtml(e.title||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">種別</div><div class="kvVal">${escapeHtml(e.kind||e.type||"-")}</div></div>
+          <div class="kvRow"><div class="kvKey">メモ</div><div class="kvVal">${escapeHtml(e.note||"-")}</div></div>
+        </div>
+        <div class="sep"></div>
+        <div class="row" style="gap:10px;justify-content:flex-end;">
+          <button class="btn" id="btnEventDetailEdit">編集</button>
+        </div>
+      `;
+      showModal("イベント：詳細", html);
+      $("#btnEventDetailEdit")?.addEventListener("click", ()=>{ closeModal(); openEventModal("edit", e); });
+    });
+  });
 
   // edit/delete entry
   $$("[data-edit-entry]").forEach(btn=>{
