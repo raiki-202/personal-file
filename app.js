@@ -2239,7 +2239,7 @@ function showModal(title, html){
 
 // alias for compatibility
 const openModal = showModal;
-const closeModal = hideModal;
+// NOTE: closeModal() is defined below as a function. Do not redeclare as const.
 
 function hideModal(){
   $("#modalOverlay").style.display = "none";
