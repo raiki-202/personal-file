@@ -1435,15 +1435,25 @@ function renderAccounts(){
   const usageOf = (id)=> Number(deltasCur.get(id)||0) + Number(cardDebitsCurMonth.get(id)||0);
 
   const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
-  const outstandingByPayAcc = new Map();
-  for(const c of activeCards){
-    const payAcc = c.paymentAccountId || "rakuten";
-    const payableId = payableAccountIdForCardId(c.id);
-    const estPayable = baseBal(payableId) + deltaAllOf(payableId);
-    const out = estPayable<0 ? (-estPayable) : 0;
-    outstandingByPayAcc.set(payAcc, (outstandingByPayAcc.get(payAcc)||0) + out);
+
+// Upcoming (not yet debited) amounts per payment account, based on schedule (payDate > today)
+const outstandingByPayAcc = (()=>{
+  const m = new Map();
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  for(const s of schedule){
+    if(s.payDateMs<=today0) continue; // already debited
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    m.set(payAcc, (m.get(payAcc)||0) + amt);
   }
-  const nextPay = computeNextCardPayment();
+  return m;
+})();
+
+const nextPay = computeNextCardPayment();
 
 // per-card next payment (today or later) - same logic as クレカ情報タブ
 const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
@@ -1495,19 +1505,7 @@ schedule
                 const est = baseBal(a.id) + deltaAllOf(a.id);
                 const base = baseBal(a.id);
                 const out = Number(outstandingByPayAcc.get(a.id)||0);
-                const due = (nextPay && nextPay.paymentAccountId===a.id)
-                  ? `（次回 ${escapeHtml(nextPay.payMonth||"")}/${String(nextPay.payDay||"").padStart(2,"0")}）`
-                  : "";
-                const extra = out>0 ? `<div class="small">支払予定：▲¥${yen(out)}${due}</div>` : "";
-                return `
-                  <tr>
-                    <td>${escapeHtml(accountName(a.id))}${extra}</td>
-                    <td class="right">¥${yen(est)}</td>
-                    <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
-                    <td class="right"><b>¥${yen(est - out)}</b></td>
-                  </tr>
-                `;
-              }).join("");
+                const due = "";
             })()}
           </tbody>
         </table>
