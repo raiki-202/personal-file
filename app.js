@@ -1501,11 +1501,20 @@ schedule
               };
               const bankRows = mb.filter(x=>x.id!=="nisa" && !isPayableId(x.id));
               return bankRows.map(a=>{
-                const d = usageOf(a.id);
-                const est = baseBal(a.id) + deltaAllOf(a.id);
-                const base = baseBal(a.id);
+                const bal = baseBal(a.id) + deltaAllOf(a.id);
+                const usage = usageOf(a.id);
                 const out = Number(outstandingByPayAcc.get(a.id)||0);
-                const due = "";
+                const extra = out>0 ? `<div class="small">支払予定：▲¥${yen(out)}</div>` : "";
+                const est = bal - out;
+                return `
+                  <tr>
+                    <td>${escapeHtml(accountName(a.id))}${extra}</td>
+                    <td class="right">¥${yen(bal)}</td>
+                    <td class="right">${usage===0 ? "-" : `¥${yen(usage)}`}</td>
+                    <td class="right"><b>¥${yen(est)}</b></td>
+                  </tr>
+                `;
+              }).join("");
             })()}
           </tbody>
         </table>
