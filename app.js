@@ -1354,17 +1354,6 @@ function renderAccounts(){
     outstandingByPayAcc.set(payAcc, (outstandingByPayAcc.get(payAcc)||0) + out);
   }
   const nextPay = computeNextCardPayment();
-  const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
-  const outstandingByPayAcc = new Map();
-  for(const c of activeCards){
-    const payAcc = c.paymentAccountId || "rakuten";
-    const payableId = payableAccountIdForCardId(c.id);
-    const pb = (mb.find(x=>x.id===payableId)?.balance||0);
-    const est = Number(pb) + deltaOf(payableId);
-    const out = est<0 ? (-est) : 0;
-    outstandingByPayAcc.set(payAcc, (outstandingByPayAcc.get(payAcc)||0) + out);
-  }
-  const nextPay = computeNextCardPayment();
 
 // per-card next payment (today or later) - same logic as クレカ情報タブ
 const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
