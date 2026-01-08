@@ -668,7 +668,11 @@ function autoCardPaymentDeltasUpToToday(){
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   for(const s of schedule){
-    if(s.payDateMs>today0) continue;
+    const pd = Number(s.payDateMs);
+    // Safety: if payDateMs is invalid, never treat it as "already debited"
+    if(!Number.isFinite(pd)) continue;
+    if(pd>today0) continue;
+
     const card = getCreditCardById(s.cardId);
     const payAcc = card?.paymentAccountId || "rakuten";
     const payable = payableAccountIdForCardId(s.cardId);
@@ -679,6 +683,7 @@ function autoCardPaymentDeltasUpToToday(){
   }
   return m;
 }
+
 
 function mergedBalances(){
   // base from bundle
