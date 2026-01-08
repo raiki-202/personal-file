@@ -724,6 +724,26 @@ function autoCardPaymentDeltasUpToToday(){
   return m;
 }
 
+// Credit-card DEBIT deltas for a given payMonth (monthKey, e.g. "2026-01").
+// This is MONTH-BASED (historical correct), not "today based".
+// Purchases do not affect bank accounts until their payMonth/payDate.
+function autoCardPaymentDeltasForPayMonth(monthKey){
+  const m = new Map();
+  if(!monthKey) return m;
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0 && x.payMonth===monthKey);
+  for(const s of schedule){
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const payable = payableAccountIdForCardId(s.cardId);
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    m.set(payAcc, (m.get(payAcc)||0) - amt);
+    m.set(payable, (m.get(payable)||0) + amt);
+  }
+  return m;
+}
+
+
 
 function mergedBalances(){
   // base from bundle
@@ -1444,7 +1464,11 @@ function renderAccounts(){
 
   // Hybrid "line" balances:
   // base = 2 months ago bundle (anchor)
-  // delta = (prev month Firestore entries) + (selected month Firestore entries) + (card debits up to today)
+  // delta = (prev month Firestore entries) + (selected month Firestore entries)
+  //   + (credit-card debits that belong to each month by card rule: payMonth)
+  // IMPORTANT:
+  // - Credit-card PURCHASES do NOT affect bank balance until their payMonth/payDate.
+  // - Bank balance changes only by non-card entries + card DEBIT events (computed by payMonth).
   const baseBal = (id)=> baseBalanceFromAnchorBundle(id);
 
   const curEntries = (state.entries||[]);
@@ -1452,34 +1476,23 @@ function renderAccounts(){
   const combined = [...prevEntries, ...curEntries];
 
   const deltasAll = deltasForMonths(combined);
-  const cardDebits = autoCardPaymentDeltasUpToToday();
 
-  const deltaAllOf = (id)=> Number(deltasAll.get(id)||0) + Number(cardDebits.get(id)||0);
+  // Credit-card debits are computed per month (payMonth), not "up to today".
+  const prevMonthKey = addMonthsKey(state.month, -1);
+  const cardDebitsPrev = autoCardPaymentDeltasForPayMonth(prevMonthKey);
+  const cardDebitsCur = autoCardPaymentDeltasForPayMonth(state.month);
 
-  // current-month usage (label only): based on selected month's entries + card debits that fall within selected month
+  const deltaAllOf = (id)=>
+    Number(deltasAll.get(id)||0)
+    + Number(cardDebitsPrev.get(id)||0)
+    + Number(cardDebitsCur.get(id)||0);
+
+  // current-month usage (label only): based on selected month's entries
+  // + card debits that belong to selected month (payMonth==state.month)
   const deltasCur = deltasForMonths(curEntries);
-  const cardDebitsCurMonth = (()=>{
-    const m = new Map();
-    const schedule = buildCardPaymentSchedule();
-    const now = new Date();
-    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
-    for(const s of schedule){
-      if(s.payDateMs>today0) continue;
-      const payMonth = ymKey(new Date(s.payDateMs).getFullYear(), new Date(s.payDateMs).getMonth()+1);
-      if(payMonth!==state.month) continue;
-      const card = getCreditCardById(s.cardId);
-      const payAcc = card?.paymentAccountId || "rakuten";
-      const payable = payableAccountIdForCardId(s.cardId);
-      const amt = Number(s.amount||0);
-      if(!amt) continue;
-      m.set(payAcc, (m.get(payAcc)||0) - amt);
-      m.set(payable, (m.get(payable)||0) + amt);
-    }
-    return m;
-  })();
-  const usageOf = (id)=> Number(deltasCur.get(id)||0) + Number(cardDebitsCurMonth.get(id)||0);
+  const usageOf = (id)=> Number(deltasCur.get(id)||0) + Number(cardDebitsCur.get(id)||0);
 
-  const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
+const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
 
 // Upcoming (not yet debited) amounts per payment account, based on schedule (payDate > today)
 const outstandingByPayAcc = (()=>{
