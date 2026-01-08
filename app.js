@@ -33,7 +33,6 @@ const state = {
   month: null,
   bundle: null,
   entries: [],
-  entriesAll: [],
   balances: [],
   fixedCosts: [],
   events: [],
@@ -111,34 +110,6 @@ async function loadMonthData(month){
   const s1 = await getDocs(q1);
   state.entries = s1.docs.map(d=>({id:d.id, ...d.data()}));
 
-// ---- entriesAll: load nearby months for cross-month CC payment calc ----
-// UI tables still use state.entries (selected month only).
-state.entriesAll = Array.isArray(state.entries) ? [...state.entries] : [];
-try{
-  const mk = (y,m)=> `${y}-${String(m).padStart(2,"0")}`;
-  const addM = (key, delta)=>{
-    const [y0,m0]=key.split("-").map(n=>Number(n));
-    let y=y0, m=m0+delta;
-    while(m>12){ y+=1; m-=12; }
-    while(m<1){ y-=1; m+=12; }
-    return mk(y,m);
-  };
-  const monthsToLoad = new Set();
-  for(let i=-2;i<=2;i++) monthsToLoad.add(addM(month, i));
-  monthsToLoad.delete(month);
-  for(const mo of monthsToLoad){
-    const ref = collection(db, "months", mo, "entries");
-    const qx = query(ref, orderBy("occurredAt","asc"));
-    const sx = await getDocs(qx);
-    const more = sx.docs.map(d=>({id:d.id, ...d.data(), __month: mo}));
-    state.entriesAll.push(...more);
-  }
-}catch(e){
-  console.warn("[entriesAll] load skipped:", e?.message||e);
-}
-// ---- /entriesAll ----
-
-
   // balances
   const balancesRef = collection(db, "months", month, "balances");
   const s2 = await getDocs(balancesRef);
@@ -213,9 +184,6 @@ await syncBirthdayEvents();
       return e;
     });
   }
-
-  // Auto-post card payments whose payment date has passed (idempotent)
-  await ensureCardPaymentPosts();
 
 }
 async function ensureFixedCostPosts(month){
@@ -486,7 +454,7 @@ function statementMonthForEntry(card, entry){
 function buildCardPaymentSchedule(){
   const cards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
   const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
-  const entries = ((state.entriesAll && Array.isArray(state.entriesAll) && state.entriesAll.length) ? state.entriesAll : (state.entries||[])).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ").map(e=>{
+  const entries = (state.entries||[]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ").map(e=>{
     if(e && !e.creditCardId && e.meta?.fixedCostId){
       const fc = fixedMap.get(e.meta.fixedCostId);
       if(fc?.creditCardId) return { ...e, creditCardId: fc.creditCardId };
@@ -527,64 +495,25 @@ function computeNextCardPayment(){
   const dateStr = new Date(nextDate).toLocaleDateString("ja-JP");
   return { total, dateStr, byCard, payDateMs: nextDate };
 }
-
-async function ensureCardPaymentPosts(){
-  // Create real transfer entries on/after payment day so bank balances update automatically (idempotent).
-  // This makes data "line" across months, not "points".
-  try{
-    if(state.role==="viewer") return;
-    const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-    const now = new Date();
-    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
-
-    for(const s of schedule){
-      if(!s.payDateMs || s.payDateMs>today0) continue;
-
-      const card = getCreditCardById(s.cardId);
-      const payAcc = card?.paymentAccountId || "rakuten";
-      const payable = payableAccountIdForCardId(s.cardId);
-      const amt = Number(s.amount||0);
-      if(!amt) continue;
-
-      const docId = `cardpay_${s.cardId}_${s.payDateMs}`;
-      const ref = doc(db, "months", s.payMonth, "entries", docId);
-      const snap = await getDoc(ref);
-      if(snap.exists()) continue;
-
-      const payload = {
-        type: "transfer",
-        category: "クレカ引落",
-        amount: amt,
-        note: `${s.cardName||"カード"} 支払（自動）`,
-        occurredAt: Number(s.payDateMs),
-        paymentMethod: "口座引落",
-        creditCardId: s.cardId,
-        fromAccountId: payAcc,
-        toAccountId: payable,
-        meta: {
-          cardPayment: true,
-          cardId: s.cardId,
-          payDateMs: Number(s.payDateMs),
-          payMonth: s.payMonth
-        },
-        createdAt: Date.now(),
-        createdBy: state.user?.uid || "",
-        updatedAt: Date.now()
-      };
-
-      await setDoc(ref, payload, { merge: true });
-    }
-  }catch(e){
-    console.warn("[cardPayment] auto post skipped:", e?.message||e);
-  }
-}
-
 function autoCardPaymentDeltasForMonth(monthKey){
-  // NOTE: We now post real "クレカ引落" transfer entries (idempotent) into months/{payMonth}/entries.
-  // So we do NOT apply display-only auto deltas here (avoid double counting).
-  return new Map();
+  // On/after payment day: reflect automatic debit from payment account and clearing payable account (display-only)
+  const deltas = new Map();
+  const schedule = buildCardPaymentSchedule();
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  for(const s of schedule){
+    if(s.payMonth!==monthKey) continue;
+    if(s.payDateMs>today0) continue; // not yet debited
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const payable = payableAccountIdForCardId(s.cardId);
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    deltas.set(payAcc, (deltas.get(payAcc)||0) - amt);
+    deltas.set(payable, (deltas.get(payable)||0) + amt); // reduce liability (toward 0)
+  }
+  return deltas;
 }
-
 
 function entryAccountLabel(e){
   if(!e) return "-";
@@ -816,7 +745,7 @@ function renderHome(){
         <span class="badge" style="margin-left:8px;">実質 ¥${yen(totalNetEst)}</span>
       </div>
       <div class="small" style="margin-top:10px;opacity:.8;">
-        ※推定残高＝（月末残高 or 入力残高）＋今月差分（入出金/資金移動/固定費自動反映）＋クレカ引落（支払日到来分）
+        ※推定残高＝（月末残高 or 入力残高）＋今月使用金額（入出金/資金移動/固定費自動反映）＋クレカ引落（支払日到来分）
       </div>
     </div>
 
@@ -1413,7 +1342,7 @@ schedule
             <tr>
               <th>口座</th>
               <th class="right">残高</th>
-              <th class="right">今月差分</th>
+              <th class="right">今月使用金額</th>
               <th class="right">推定残高</th>
             </tr>
           </thead>
@@ -1428,8 +1357,9 @@ schedule
               const bankRows = mb.filter(x=>x.id!=="nisa" && !isPayableId(x.id));
               return bankRows.map(a=>{
                 const d = deltaOf(a.id);
-                const est = Number(a.balance||0) + d;
+                const balanceNow = Number(a.balance||0) + d;
                 const out = Number(outstandingByPayAcc.get(a.id)||0);
+                const est = balanceNow - out;
                 const due = (nextPay && nextPay.paymentAccountId===a.id)
                   ? `（次回 ${escapeHtml(nextPay.payMonth||"")}/${String(nextPay.payDay||"").padStart(2,"0")}）`
                   : "";
@@ -1437,7 +1367,7 @@ schedule
                 return `
                   <tr>
                     <td>${escapeHtml(accountName(a.id))}${extra}</td>
-                    <td class="right">¥${yen(a.balance)}</td>
+                    <td class="right">¥${yen(balanceNow)}</td>
                     <td class="right">${d===0?"-":`¥${yen(d)}`}</td>
                     <td class="right"><b>¥${yen(est)}</b></td>
                   </tr>
@@ -2821,7 +2751,7 @@ function renderPrepaidCards(){
             <tr>
               <th>カード名</th>
               <th class="right">月末残高</th>
-              <th class="right">今月差分</th>
+              <th class="right">今月使用金額</th>
               <th class="right">推定残高</th>
               <th></th>
             </tr>
