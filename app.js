@@ -1533,7 +1533,7 @@ const outstandingByPayAcc = (()=>{
   const m = new Map();
   const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
   for(const s of schedule){
-    if(s.payDateMs<=today0) continue; // already debited
+    if(Number(s.payDateMs)<=asOfSel) continue; // already debited as of this month view
     const card = getCreditCardById(s.cardId);
     const payAcc = card?.paymentAccountId || "rakuten";
     const amt = Number(s.amount||0);
@@ -1546,10 +1546,13 @@ const outstandingByPayAcc = (()=>{
 const nextPay = computeNextCardPayment();
 
 // per-card next payment (today or later) - same logic as クレカ情報タブ
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+
 const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
 const nextByCard = new Map();
 schedule
-  .filter(x=>x.payDateMs>=today0)
+  .filter(x=>Number(x.payDateMs)>=today0)
   .sort((a,b)=>a.payDateMs-b.payDateMs)
   .forEach(x=>{ if(!nextByCard.has(x.cardId)) nextByCard.set(x.cardId, x); });
 
