@@ -32,7 +32,11 @@ const state = {
   master: null,
   month: null,
   bundle: null,
-  entries: [],
+  
+  bundleBase: null,
+  bundlePrev: null,
+entries: [],
+  entriesPrev: [],
   balances: [],
   fixedCosts: [],
   events: [],
@@ -109,12 +113,19 @@ async function loadMonthData(month){
   const q1 = query(entriesRef, orderBy("occurredAt","asc"));
   const s1 = await getDocs(q1);
   state.entries = s1.docs.map(d=>({id:d.id, ...d.data()}));
+// entries (previous month for rolling balance / card schedule)
+  const prevMonth = addMonthsKey(month, -1);
+  try{
+    const prevRef = collection(db, "months", prevMonth, "entries");
+    const qPrev = query(prevRef, orderBy("occurredAt","asc"));
+    const sPrev = await getDocs(qPrev);
+    state.entriesPrev = sPrev.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(e){
+    state.entriesPrev = [];
+  }
 
-  // balances
-  const balancesRef = collection(db, "months", month, "balances");
-  const s2 = await getDocs(balancesRef);
-  state.balances = s2.docs.map(d=>({id:d.id, ...d.data()}));
-
+  // balances (manual input disabled: balances are derived from history)
+  state.balances = [];
   // fixedCosts / events
   const s3 = await getDocs(collection(db, "fixedCosts"));
   state.fixedCosts = s3.docs.map(d=>({id:d.id, ...d.data()}));
@@ -454,7 +465,7 @@ function statementMonthForEntry(card, entry){
 function buildCardPaymentSchedule(){
   const cards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
   const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
-  const entries = (state.entries||[]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ").map(e=>{
+  const entries = ([...(state.entriesPrev||[]), ...(state.entries||[])]).filter(e=>e.type==="expense" && e.paymentMethod==="クレカ").map(e=>{
     if(e && !e.creditCardId && e.meta?.fixedCostId){
       const fc = fixedMap.get(e.meta.fixedCostId);
       if(fc?.creditCardId) return { ...e, creditCardId: fc.creditCardId };
@@ -537,10 +548,11 @@ function entryAccountLabel(e){
   return "-";
 }
 
-function accountDeltasFromEntries(){
+function accountDeltasFromEntries(list){
+  const entries = Array.isArray(list) ? list : (state.entries||[]);
   const m = new Map();
   const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
-  for(const e of (state.entries||[])){
+  for(const e of entries){
     const amt = Number(e.amount||0);
     if(e.type==="income"){
       const to = e.toAccountId;
@@ -580,24 +592,17 @@ function accountDeltasFromEntries(){
   return m;
 }
 
+
 function mergedBalances(){
-  // base from bundle
+  // base: (month-2) bundle as the last "closed" snapshot,
+  // then apply previous-month Firestore entries to carry balances forward (line-style).
   const base = new Map();
-  const b = state.bundle?.accounts || [];
+  const b = (state.bundleBase?.accounts || state.bundlePrev?.accounts || state.bundle?.accounts || []);
   for(const a of b){
     base.set(a.id, {
       id: a.id,
       balance: Number(a.balance||0),
       purposeBalances: a.purposeBalances || []
-    });
-  }
-  // overlay from Firestore balances (per accountId)
-  for(const s of state.balances){
-    const id = s.accountId || s.id;
-    base.set(id, {
-      id,
-      balance: Number(s.balance||0),
-      purposeBalances: s.purposeBalances || []
     });
   }
 
@@ -607,7 +612,27 @@ function mergedBalances(){
     if(!base.has(a.id)) base.set(a.id, {id:a.id, balance:0, purposeBalances:[]});
   }
 
+  // Carry forward by applying previous-month deltas (Firestore) onto the base snapshot
+  const prevMonth = addMonthsKey(state.month, -1);
+  const prevDeltas = accountDeltasFromEntries(state.entriesPrev||[]);
+  const prevAuto = autoCardPaymentDeltasForMonth(prevMonth);
+
+  // include any ids that appear only in deltas
+  for(const [id] of prevDeltas.entries()){
+    if(!base.has(id)) base.set(id, {id, balance:0, purposeBalances:[]});
+  }
+  for(const [id] of prevAuto.entries()){
+    if(!base.has(id)) base.set(id, {id, balance:0, purposeBalances:[]});
+  }
+
+  for(const [id, row] of base.entries()){
+    const d = Number(prevDeltas.get(id)||0) + Number(prevAuto.get(id)||0);
+    row.balance = Number(row.balance||0) + d;
+    base.set(id, row);
+  }
+
   return [...base.values()];
+}
 }
 
 function sumsByType(){
@@ -1334,7 +1359,6 @@ schedule
         <div class="row">
           <h2 class="h1">銀行口座・現金</h2>
           <div class="spacer"></div>
-          <button class="btn" id="btnEditBalances">残高を入力/更新</button>
         </div>
         <div class="sep"></div>
         <table class="table">
@@ -1939,12 +1963,7 @@ $$("[data-entrydetail]").forEach(btn=>{
       await reloadAll();
     });
   });
-
-  // balances
-  const btnEditBalances = $("#btnEditBalances");
-  if(btnEditBalances){
-    btnEditBalances.addEventListener("click", ()=> openBalancesModal());
-  }
+  // balances: manual editing disabled (derived from history)
 
   // fixed
   const btnToggleHidden = $("#btnToggleHidden");
@@ -2494,49 +2513,6 @@ $("#m_save").addEventListener("click", async ()=>{
       await addDoc(collection(db, "months", state.month, "entries"), payload);
     }else{
       await updateDoc(doc(db, "months", state.month, "entries", entry.id), payload);
-    }
-    hideModal();
-    await reloadAll();
-  }, { once:true });
-}
-
-function openBalancesModal(){
-  if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
-  // Do not ask for manual month-end balances for system-generated payable accounts
-  const accounts = getAllAccountsFromMaster().filter(a=>!a.system);
-  const mb = mergedBalances();
-  const get = (id)=> mb.find(x=>x.id===id)?.balance || 0;
-
-  showModal("残高を入力/更新（当月）", `
-    <div class="small">※ここで入れた値が当月表示に反映（bundleより優先）</div>
-    <div class="sep"></div>
-    <div class="grid cols2">
-      ${accounts.map(a=>`
-        <div>
-          <div class="small">${escapeHtml(a.name)}</div>
-          <input class="input" type="number" data-bal="${escapeHtml(a.id)}" value="${Number(get(a.id))}" />
-        </div>
-      `).join("")}
-    </div>
-    <div class="sep"></div>
-    <div class="row">
-      <button class="btn" id="bal_save">保存</button>
-      <div class="spacer"></div>
-      <span class="small">month: ${escapeHtml(state.month)}</span>
-    </div>
-  `);
-
-  $("#bal_save").addEventListener("click", async ()=>{
-    const inputs = $$("[data-bal]");
-    for(const inp of inputs){
-      const accountId = inp.dataset.bal;
-      const balance = Number(inp.value||0);
-      // doc id = accountId
-      await setDoc(doc(db, "months", state.month, "balances", accountId), {
-        accountId, balance,
-        updatedAt: Date.now(),
-        updatedBy: state.user.uid
-      }, { merge:true });
     }
     hideModal();
     await reloadAll();
@@ -3845,6 +3821,8 @@ async function reloadAll(){
   $("#btnReload").disabled = true;
   try{
     state.master = await loadMaster();
+    state.bundleBase = await loadBundle(addMonthsKey(state.month, -2));
+    state.bundlePrev = await loadBundle(addMonthsKey(state.month, -1));
     state.bundle = await loadBundle(state.month);
     await loadMonthData(state.month);
     mount();
