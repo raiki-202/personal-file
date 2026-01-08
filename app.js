@@ -590,6 +590,96 @@ function accountDeltasFromEntries(){
   return m;
 }
 
+
+
+// ===== Hybrid "line" helpers (prev month Firestore + 2+ months ago bundle) =====
+function baseBalanceFromAnchorBundle(accountId){
+  const b = state.anchorBundle?.accounts || [];
+  const hit = b.find(x=>x.id===accountId);
+  return Number(hit?.balance||0);
+}
+
+// Like accountDeltasFromEntries(), but for an arbitrary list of entries (prev+cur, etc.)
+function deltasForMonths(entries){
+  const m = new Map();
+  const fixedMap = new Map((state.fixedCosts||[]).map(f=>[f.id,f]));
+  for(const e of (entries||[])){
+    if(!e) continue;
+    const amt = Number(e.amount||0);
+    if(!amt && amt!==0) continue;
+
+    if(e.type==="income"){
+      const to = e.toAccountId;
+      if(to){ m.set(to, (m.get(to)||0) + amt); }
+      continue;
+    }
+
+    if(e.type==="expense"){
+      let from = e.fromAccountId;
+
+      // credit card expense -> payable account
+      if(!from && e.paymentMethod==="クレカ"){
+        let cardId = e.creditCardId;
+        if(!cardId && e.meta?.fixedCostId){
+          const fc = fixedMap.get(e.meta.fixedCostId);
+          if(fc?.creditCardId) cardId = fc.creditCardId;
+        }
+        if(cardId) from = payableAccountIdForCardId(cardId);
+      }
+
+      // prepaid expense -> prepaid account
+      if(!from && e.paymentMethod==="プリペイド" && e.prepaidCardId){
+        from = prepaidAccountIdForCardId(e.prepaidCardId);
+      }
+
+      if(from){ m.set(from, (m.get(from)||0) - amt); }
+      continue;
+    }
+
+    if(e.type==="transfer"){
+      const from = e.fromAccountId;
+      const to = e.toAccountId;
+      if(from){ m.set(from, (m.get(from)||0) - amt); }
+      if(to){ m.set(to, (m.get(to)||0) + amt); }
+      continue;
+    }
+
+    if(e.type==="charge"){
+      let from = e.fromAccountId;
+      const to = e.toAccountId;
+
+      // credit-card charge -> payable account
+      if(!from && (e.chargeMethod==="クレカ" || e.paymentMethod==="クレカ") && e.creditCardId){
+        from = payableAccountIdForCardId(e.creditCardId);
+      }
+
+      if(from){ m.set(from, (m.get(from)||0) - amt); }
+      if(to){ m.set(to, (m.get(to)||0) + amt); }
+      continue;
+    }
+  }
+  return m;
+}
+
+// Card debits up to today (across months): payment account decreases, payable account clears
+function autoCardPaymentDeltasUpToToday(){
+  const m = new Map();
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
+  for(const s of schedule){
+    if(s.payDateMs>today0) continue;
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const payable = payableAccountIdForCardId(s.cardId);
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    m.set(payAcc, (m.get(payAcc)||0) - amt);
+    m.set(payable, (m.get(payable)||0) + amt);
+  }
+  return m;
+}
+
 function mergedBalances(){
   // base from bundle
   const base = new Map();
