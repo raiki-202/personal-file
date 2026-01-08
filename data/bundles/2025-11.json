@@ -1,0 +1,61 @@
+{
+  "month": "2025-11",
+  "snapshotAt": "2025-11-30T23:59:59+09:00",
+  "accounts": [
+    {
+      "id": "kyoto",
+      "balance": 0
+    },
+    {
+      "id": "momiji",
+      "balance": 0
+    },
+    {
+      "id": "rakuten",
+      "balance": 0
+    },
+    {
+      "id": "hiroshima",
+      "balance": 0
+    },
+    {
+      "id": "sbi_net",
+      "balance": 0,
+      "purposeBalances": [
+        {
+          "id": "A",
+          "balance": 0
+        },
+        {
+          "id": "B",
+          "balance": 0
+        }
+      ]
+    },
+    {
+      "id": "cash",
+      "balance": 0
+    }
+  ],
+  "nisa": {
+    "principal": 0,
+    "current": 0,
+    "allocations": [
+      {
+        "id": "typeA",
+        "label": "種別A",
+        "percentInt": 50
+      },
+      {
+        "id": "typeB",
+        "label": "種別B",
+        "percentInt": 30
+      },
+      {
+        "id": "typeC",
+        "label": "種別C",
+        "percentInt": 20
+      }
+    ]
+  }
+}
