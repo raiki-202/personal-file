@@ -63,6 +63,46 @@ function monthKey(d=new Date()){
   const m = String(d.getMonth()+1).padStart(2,"0");
   return `${y}-${m}`;
 }
+
+function monthKeyFromMs(ms){
+  const d = new Date(Number(ms||0));
+  if(Number.isNaN(d.getTime())) return monthKey();
+  return monthKey(d);
+}
+
+/**
+ * Save entry to the month collection determined by occurredAt (NOT createdAt / not current picker month).
+ * - add: create doc under months/{targetMonth}/entries
+ * - edit: update in-place if same month; if month changed, move doc to target month (same id) and delete original.
+ */
+async function saveEntryByOccurredMonth({ mode, entryId, payload, sourceMonth }){
+  const targetMonth = monthKeyFromMs(payload?.occurredAt);
+  const srcMonth = sourceMonth || state.month;
+
+  if(mode==="add"){
+    const col = collection(db, "months", targetMonth, "entries");
+    const ref = doc(col); // auto id
+    payload.createdAt = Date.now();
+    payload.createdBy = state.user.uid;
+    await setDoc(ref, payload);
+    return { savedMonth: targetMonth, id: ref.id };
+  }
+
+  // edit
+  if(targetMonth === srcMonth){
+    await updateDoc(doc(db, "months", srcMonth, "entries", entryId), payload);
+    return { savedMonth: targetMonth, id: entryId };
+  }
+
+  // move across months
+  await setDoc(
+    doc(db, "months", targetMonth, "entries", entryId),
+    { ...payload, movedFromMonth: srcMonth, movedAt: Date.now() },
+    { merge: true }
+  );
+  await deleteDoc(doc(db, "months", srcMonth, "entries", entryId));
+  return { savedMonth: targetMonth, id: entryId, moved: true };
+}
 function withinDays(ms, days){
   const now = Date.now();
   const diff = ms - now;
@@ -2635,13 +2675,18 @@ $("#m_save").addEventListener("click", async ()=>{
       updatedAt: Date.now()
     };
 
-    if(mode==="add"){
-      payload.createdAt = Date.now();
-      payload.createdBy = state.user.uid;
-      await addDoc(collection(db, "months", state.month, "entries"), payload);
-    }else{
-      await updateDoc(doc(db, "months", state.month, "entries", entry.id), payload);
+    const res = await saveEntryByOccurredMonth({
+      mode,
+      entryId: (mode==="add") ? null : entry.id,
+      payload,
+      sourceMonth: state.month
+    });
+    hideModal();
+    // if saved into different month, keep current view but inform user (minimal)
+    if(res && res.savedMonth && res.savedMonth !== state.month){
+      try{ alert(`別月（${res.savedMonth}）に保存しました。月セレクタで切り替えると表示されます。`); }catch(_){}
     }
+    await reloadAll();
     hideModal();
     await reloadAll();
   }, { once:true });
