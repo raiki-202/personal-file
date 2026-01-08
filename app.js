@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
 import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, deleteDoc, updateDoc,
-  query, where, orderBy
+  query, where, orderBy, increment
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 /** =========================
@@ -34,6 +34,7 @@ const state = {
   bundle: null,
   entries: [],
   balances: [],
+  currentBalances: [],
   fixedCosts: [],
   events: [],
   family: [],
@@ -204,6 +205,18 @@ await syncBirthdayEvents();
   if(Array.isArray(state.entries)) state.entries = state.entries.map(normalizeEntryForAccounts);
   if(Array.isArray(state.cardEntries)) state.cardEntries = state.cardEntries.map(normalizeEntryForAccounts);
 
+
+
+async function loadCurrentBalances(){
+  // Global realtime balances (not month-scoped)
+  try{
+    const s = await getDocs(collection(db, "currentBalances"));
+    state.currentBalances = s.docs.map(d=>({ id:d.id, ...d.data() }));
+  }catch(e){
+    console.warn("[currentBalances] read failed:", e?.message||e);
+    state.currentBalances = [];
+  }
+}
 
 }
 async function ensureFixedCostPosts(month){
@@ -596,6 +609,89 @@ function accountDeltasFromEntries(){
       if(to){ m.set(to, (m.get(to)||0) + amt); }
     }
   }
+
+/** =========================
+ *  Realtime balance updates (currentBalances)
+ *  - We persist bank/cash/prepaid balances as "current" values.
+ *  - Credit-card payable accounts (ccpay_*) are NOT persisted here (display-only).
+========================= */
+function impactsForEntry(e){
+  // returns Map(accountId -> delta) where delta >0 increases balance
+  const m = new Map();
+  if(!e) return m;
+  const amt = Number(e.amount||0);
+  if(!amt) return m;
+
+  const add = (id, delta)=>{
+    if(!id) return;
+    m.set(id, (m.get(id)||0) + delta);
+  };
+
+  if(e.type==="income"){
+    add(e.toAccountId, +amt);
+    return m;
+  }
+
+  if(e.type==="expense"){
+    const pm = e.paymentMethod || "";
+    if(pm==="クレカ"){
+      // bank balance changes on payment day (handled separately / display-only)
+      return m;
+    }
+    if(pm==="プリペイド"){
+      const pid = e.prepaidCardId ? prepaidAccountIdForCardId(e.prepaidCardId) : e.fromAccountId;
+      add(pid, -amt);
+      return m;
+    }
+    // 現金 / 振込 / 口座引落
+    add(e.fromAccountId, -amt);
+    return m;
+  }
+
+  if(e.type==="transfer"){
+    add(e.fromAccountId, -amt);
+    add(e.toAccountId, +amt);
+    return m;
+  }
+
+  if(e.type==="charge"){
+    // Charge always increases prepaid balance
+    const to = e.prepaidCardId ? prepaidAccountIdForCardId(e.prepaidCardId) : e.toAccountId;
+    add(to, +amt);
+    const method = e.chargeMethod || e.paymentMethod || "";
+    if(method!=="クレカ"){
+      add(e.fromAccountId, -amt);
+    }
+    return m;
+  }
+
+  return m;
+}
+
+async function applyImpactsToCurrentBalances(deltaMap){
+  if(state.role==="viewer") return;
+  if(!deltaMap || !deltaMap.size) return;
+
+  const uid = state.user?.uid || "";
+  for(const [accountId, delta] of deltaMap.entries()){
+    const id = String(accountId||"");
+    if(!id) continue;
+    // never persist system payable accounts
+    if(id.startsWith("ccpay_")) continue;
+
+    try{
+      await setDoc(doc(db, "currentBalances", id), {
+        accountId: id,
+        balance: increment(Number(delta||0)),
+        updatedAt: Date.now(),
+        updatedBy: uid
+      }, { merge:true });
+    }catch(e){
+      console.warn("[currentBalances] write failed:", id, e?.message||e);
+    }
+  }
+}
+
   return m;
 }
 
@@ -610,15 +706,25 @@ function mergedBalances(){
       purposeBalances: a.purposeBalances || []
     });
   }
-  // overlay from Firestore balances (per accountId)
-  for(const s of state.balances){
-    const id = s.accountId || s.id;
-    base.set(id, {
-      id,
-      balance: Number(s.balance||0),
-      purposeBalances: s.purposeBalances || []
-    });
-  }
+// overlay from Firestore balances (month-scoped, optional)
+for(const s of state.balances){
+  const id = s.accountId || s.id;
+  base.set(id, {
+    id,
+    balance: Number(s.balance||0),
+    purposeBalances: s.purposeBalances || []
+  });
+}
+
+// overlay from Firestore currentBalances (global realtime) - highest priority
+for(const s of (state.currentBalances||[])){
+  const id = s.accountId || s.id;
+  base.set(id, {
+    id,
+    balance: Number(s.balance||0),
+    purposeBalances: s.purposeBalances || []
+  });
+}
 
   // ensure all accounts exist
   const all = getAllAccountsFromMaster();
@@ -672,7 +778,13 @@ function renderHome(){
 
   const deltas = accountDeltasFromEntries();
   const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
-  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+  const deltaOf = (id)=>{
+    const sid = String(id||"");
+    const auto = Number(autoDeltas.get(id)||0);
+    // realtime balances are persisted for normal accounts; only system payable uses entry deltas
+    if(sid.startsWith("ccpay_")) return Number(deltas.get(id)||0) + auto;
+    return auto;
+  };
 
   const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
   const payableRows = activeCards.map(c=>{
@@ -1318,7 +1430,13 @@ function renderAccounts(){
   const mb = mergedBalances();
   const deltas = accountDeltasFromEntries();
   const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
-  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+  const deltaOf = (id)=>{
+    const sid = String(id||"");
+    const auto = Number(autoDeltas.get(id)||0);
+    // realtime balances are persisted for normal accounts; only system payable uses entry deltas
+    if(sid.startsWith("ccpay_")) return Number(deltas.get(id)||0) + auto;
+    return auto;
+  };
   const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
   const outstandingByPayAcc = new Map();
   for(const c of activeCards){
@@ -1360,7 +1478,7 @@ schedule
           <thead>
             <tr>
               <th>口座</th>
-              <th class="right">先月末残高</th>
+              <th class="right">残高</th>
               <th class="right">今月差分</th>
               <th class="right">推定残高</th>
             </tr>
@@ -1934,8 +2052,17 @@ $$("[data-entrydetail]").forEach(btn=>{
       if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
       closeModal();
       if(!confirm("削除しますか？")) return;
-      await deleteDoc(doc(db, "months", state.month, "entries", id));
-      await reloadAll();
+// realtime balances: revert the impact first
+const e0 = state.entries.find(x=>x.id===id);
+if(e0){
+  const imp = impactsForEntry(e0);
+  const rev = new Map();
+  for(const [k,v] of imp.entries()) rev.set(k, -Number(v||0));
+  await applyImpactsToCurrentBalances(rev);
+}
+
+await deleteDoc(doc(db, "months", state.month, "entries", id));
+await reloadAll();
     });
   });
 });
@@ -1953,12 +2080,31 @@ $$("[data-entrydetail]").forEach(btn=>{
       if(state.role==="viewer"){ alert("viewer は編集できません"); return; }
       const id = btn.dataset.delEntry;
       if(!confirm("削除しますか？")) return;
-      await deleteDoc(doc(db, "months", state.month, "entries", id));
-      await reloadAll();
+
+      // realtime balances: revert the impact first
+      const e = state.entries.find(x=>x.id===id);
+      if(e){
+        const imp = impactsForEntry(e);
+        const rev = new Map();
+        for(const [k,v] of imp.entries()) rev.set(k, -Number(v||0));
+        await applyImpactsToCurrentBalances(rev);
+      }
+
+// realtime balances: revert the impact first
+const e0 = state.entries.find(x=>x.id===id);
+if(e0){
+  const imp = impactsForEntry(e0);
+  const rev = new Map();
+  for(const [k,v] of imp.entries()) rev.set(k, -Number(v||0));
+  await applyImpactsToCurrentBalances(rev);
+}
+
+await deleteDoc(doc(db, "months", state.month, "entries", id));
+await reloadAll();
     });
   });
 
-  // balances
+// balances
   const btnEditBalances = $("#btnEditBalances");
   if(btnEditBalances){
     btnEditBalances.addEventListener("click", ()=> openBalancesModal());
@@ -2507,14 +2653,24 @@ $("#m_save").addEventListener("click", async ()=>{
     };
 
     if(mode==="add"){
-      payload.createdAt = Date.now();
-      payload.createdBy = state.user.uid;
-      await addDoc(collection(db, "months", state.month, "entries"), payload);
-    }else{
-      await updateDoc(doc(db, "months", state.month, "entries", entry.id), payload);
-    }
-    hideModal();
-    await reloadAll();
+  payload.createdAt = Date.now();
+  payload.createdBy = state.user.uid;
+  await addDoc(collection(db, "months", state.month, "entries"), payload);
+
+  // realtime balances: apply impact immediately (non-card methods)
+  await applyImpactsToCurrentBalances(impactsForEntry(payload));
+}else{
+  // compute diff (new - old) to keep balances consistent
+  const oldMap = impactsForEntry(entry);
+  const newMap = impactsForEntry(payload);
+  const diff = new Map();
+  for(const [k,v] of oldMap.entries()) diff.set(k, (diff.get(k)||0) - Number(v||0));
+  for(const [k,v] of newMap.entries()) diff.set(k, (diff.get(k)||0) + Number(v||0));
+  await updateDoc(doc(db, "months", state.month, "entries", entry.id), payload);
+  await applyImpactsToCurrentBalances(diff);
+}
+hideModal();
+await reloadAll();
   }, { once:true });
 }
 
@@ -2525,7 +2681,7 @@ function openBalancesModal(){
   const mb = mergedBalances();
   const get = (id)=> mb.find(x=>x.id===id)?.balance || 0;
 
-  showModal("残高を入力/更新（当月）", `
+  showModal("残高を入力/更新（現在）", `
     <div class="small">※ここで入れた値が当月表示に反映（bundleより優先）</div>
     <div class="sep"></div>
     <div class="grid cols2">
@@ -2550,7 +2706,7 @@ function openBalancesModal(){
       const accountId = inp.dataset.bal;
       const balance = Number(inp.value||0);
       // doc id = accountId
-      await setDoc(doc(db, "months", state.month, "balances", accountId), {
+      await setDoc(doc(db, "currentBalances", accountId), {
         accountId, balance,
         updatedAt: Date.now(),
         updatedBy: state.user.uid
@@ -2750,7 +2906,13 @@ function renderPrepaidCards(){
   const mb = mergedBalances();
   const deltas = accountDeltasFromEntries();
   const autoDeltas = autoCardPaymentDeltasForMonth(state.month);
-  const deltaOf = (id)=> Number(deltas.get(id)||0) + Number(autoDeltas.get(id)||0);
+  const deltaOf = (id)=>{
+    const sid = String(id||"");
+    const auto = Number(autoDeltas.get(id)||0);
+    // realtime balances are persisted for normal accounts; only system payable uses entry deltas
+    if(sid.startsWith("ccpay_")) return Number(deltas.get(id)||0) + auto;
+    return auto;
+  };
   const balOf = (accId)=> Number((mb.find(x=>x.id===accId)?.balance)||0);
   const estOf = (accId)=> balOf(accId) + deltaOf(accId);
 
@@ -3865,6 +4027,7 @@ async function reloadAll(){
     state.master = await loadMaster();
     state.bundle = await loadBundle(state.month);
     await loadMonthData(state.month);
+    await loadCurrentBalances();
     mount();
   }finally{
     $("#btnReload").disabled = false;
