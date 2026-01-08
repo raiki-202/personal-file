@@ -380,6 +380,37 @@ function addMonthsKey(key, delta){
   while(m<1){ y-=1; m+=12; }
   return ymKey(y,m);
 }
+
+function monthKeyToYM(key){
+  const [y,m]=String(key||"").split("-").map(n=>Number(n));
+  return {y:y||0, m:m||0};
+}
+function compareMonthKey(a,b){
+  const A=monthKeyToYM(a), B=monthKeyToYM(b);
+  if(A.y!==B.y) return A.y-B.y;
+  return A.m-B.m;
+}
+function startOfMonthMs(key){
+  const {y,m}=monthKeyToYM(key);
+  if(!y||!m) return Date.now();
+  return new Date(y, m-1, 1, 0,0,0,0).getTime();
+}
+function endOfMonthMs(key){
+  const {y,m}=monthKeyToYM(key);
+  if(!y||!m) return Date.now();
+  return new Date(y, m, 0, 23,59,59,999).getTime();
+}
+// as-of time for balance display:
+// - past months: end of that month
+// - current month: now
+// - future months: just before month starts (=> no real debits yet)
+function asOfMsForMonth(key){
+  const cur = monthKey(); // current month key
+  const cmp = compareMonthKey(key, cur);
+  if(cmp < 0) return endOfMonthMs(key);
+  if(cmp === 0) return Date.now();
+  return startOfMonthMs(key) - 1;
+}
 function lastDayOf(y,m){ return new Date(y, m, 0).getDate(); } // m=1..12
 
 function clampDay(y,m,day){
@@ -534,8 +565,6 @@ function buildCardPaymentSchedule(){
 function computeNextCardPayment(){
   // nearest upcoming payment date (today or later), aggregated across cards
   const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-  const now = new Date();
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   const upcoming = schedule.filter(x=>x.payDateMs>=today0).sort((a,b)=>a.payDateMs-b.payDateMs);
   if(!upcoming.length) return null;
   const nextDate = upcoming[0].payDateMs;
@@ -549,8 +578,6 @@ function autoCardPaymentDeltasForMonth(monthKey){
   // On/after payment day: reflect automatic debit from payment account and clearing payable account (display-only)
   const deltas = new Map();
   const schedule = buildCardPaymentSchedule();
-  const now = new Date();
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   for(const s of schedule){
     if(s.payMonth!==monthKey) continue;
     if(s.payDateMs>today0) continue; // not yet debited
@@ -705,14 +732,36 @@ function deltasForMonths(entries){
 function autoCardPaymentDeltasUpToToday(){
   const m = new Map();
   const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-  const now = new Date();
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   for(const s of schedule){
     const pd = Number(s.payDateMs);
     // Safety: if payDateMs is invalid, never treat it as "already debited"
     if(!Number.isFinite(pd)) continue;
-    if(pd>today0) continue;
+    if(pd<=asOfSel) continue;
 
+    const card = getCreditCardById(s.cardId);
+    const payAcc = card?.paymentAccountId || "rakuten";
+    const payable = payableAccountIdForCardId(s.cardId);
+    const amt = Number(s.amount||0);
+    if(!amt) continue;
+    m.set(payAcc, (m.get(payAcc)||0) - amt);
+    m.set(payable, (m.get(payable)||0) + amt);
+  }
+  return m;
+}
+
+
+// Credit-card DEBIT deltas for a given payMonth (monthKey, e.g. "2026-01").
+// This is MONTH-BASED (historically correct), and also respects "as-of" time:
+// only apply debits whose payDate <= asOfMs.
+function autoCardPaymentDeltasForPayMonth(payMonthKey, asOfMs){
+  const m = new Map();
+  if(!payMonthKey) return m;
+  const asOf = Number.isFinite(Number(asOfMs)) ? Number(asOfMs) : Date.now();
+  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0 && x.payMonth===payMonthKey);
+  for(const s of schedule){
+    const pd = Number(s.payDateMs);
+    if(!Number.isFinite(pd)) continue;
+    if(pd > asOf) continue; // not yet debited as of this time
     const card = getCreditCardById(s.cardId);
     const payAcc = card?.paymentAccountId || "rakuten";
     const payable = payableAccountIdForCardId(s.cardId);
@@ -727,21 +776,6 @@ function autoCardPaymentDeltasUpToToday(){
 // Credit-card DEBIT deltas for a given payMonth (monthKey, e.g. "2026-01").
 // This is MONTH-BASED (historical correct), not "today based".
 // Purchases do not affect bank accounts until their payMonth/payDate.
-function autoCardPaymentDeltasForPayMonth(monthKey){
-  const m = new Map();
-  if(!monthKey) return m;
-  const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0 && x.payMonth===monthKey);
-  for(const s of schedule){
-    const card = getCreditCardById(s.cardId);
-    const payAcc = card?.paymentAccountId || "rakuten";
-    const payable = payableAccountIdForCardId(s.cardId);
-    const amt = Number(s.amount||0);
-    if(!amt) continue;
-    m.set(payAcc, (m.get(payAcc)||0) - amt);
-    m.set(payable, (m.get(payable)||0) + amt);
-  }
-  return m;
-}
 
 
 
@@ -1465,10 +1499,9 @@ function renderAccounts(){
   // Hybrid "line" balances:
   // base = 2 months ago bundle (anchor)
   // delta = (prev month Firestore entries) + (selected month Firestore entries)
-  //   + (credit-card debits that belong to each month by card rule: payMonth)
+  //   + (credit-card debits that belong to each month by card rule: payMonth/payDate)
   // IMPORTANT:
   // - Credit-card PURCHASES do NOT affect bank balance until their payMonth/payDate.
-  // - Bank balance changes only by non-card entries + card DEBIT events (computed by payMonth).
   const baseBal = (id)=> baseBalanceFromAnchorBundle(id);
 
   const curEntries = (state.entries||[]);
@@ -1477,29 +1510,28 @@ function renderAccounts(){
 
   const deltasAll = deltasForMonths(combined);
 
-  // Credit-card debits are computed per month (payMonth), not "up to today".
   const prevMonthKey = addMonthsKey(state.month, -1);
-  const cardDebitsPrev = autoCardPaymentDeltasForPayMonth(prevMonthKey);
-  const cardDebitsCur = autoCardPaymentDeltasForPayMonth(state.month);
+  const asOfPrev = asOfMsForMonth(prevMonthKey);
+  const asOfSel  = asOfMsForMonth(state.month);
+
+  const cardDebitsPrev = autoCardPaymentDeltasForPayMonth(prevMonthKey, asOfPrev);
+  const cardDebitsSel  = autoCardPaymentDeltasForPayMonth(state.month, asOfSel);
 
   const deltaAllOf = (id)=>
     Number(deltasAll.get(id)||0)
     + Number(cardDebitsPrev.get(id)||0)
-    + Number(cardDebitsCur.get(id)||0);
+    + Number(cardDebitsSel.get(id)||0);
 
-  // current-month usage (label only): based on selected month's entries
-  // + card debits that belong to selected month (payMonth==state.month)
+  // current-month usage (label): selected month entries + selected month debits (as of asOfSel)
   const deltasCur = deltasForMonths(curEntries);
-  const usageOf = (id)=> Number(deltasCur.get(id)||0) + Number(cardDebitsCur.get(id)||0);
+  const usageOf = (id)=> Number(deltasCur.get(id)||0) + Number(cardDebitsSel.get(id)||0);
 
 const activeCards = (state.creditCards||[]).filter(c=>c.active!==false && c.status!=="stopped");
 
-// Upcoming (not yet debited) amounts per payment account, based on schedule (payDate > today)
+// Upcoming (not yet debited) amounts per payment account, based on schedule (payDate > asOfSel)
 const outstandingByPayAcc = (()=>{
   const m = new Map();
   const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-  const now = new Date();
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   for(const s of schedule){
     if(s.payDateMs<=today0) continue; // already debited
     const card = getCreditCardById(s.cardId);
@@ -1515,8 +1547,6 @@ const nextPay = computeNextCardPayment();
 
 // per-card next payment (today or later) - same logic as クレカ情報タブ
 const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-const now = new Date();
-const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
 const nextByCard = new Map();
 schedule
   .filter(x=>x.payDateMs>=today0)
@@ -1700,8 +1730,6 @@ function renderCreditCards(){
 
   // per-card next payment (today or later)
   const schedule = buildCardPaymentSchedule().filter(x=>x.amount!==0);
-  const now = new Date();
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0).getTime();
   const nextByCard = new Map();
   schedule
     .filter(x=>x.payDateMs>=today0)
